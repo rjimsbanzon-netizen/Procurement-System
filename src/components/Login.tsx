@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { isCloudConfigured } from '../db/cloudApi';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -83,23 +84,29 @@ export default function Login({ onSuccess }: LoginProps) {
           </button>
         </form>
 
-        <div className="demo-credentials">
-          <p className="demo-title">Demo Accounts</p>
-          <div className="demo-buttons">
-            <button type="button" className="demo-btn admin" onClick={() => fillDemo('admin', 'admin123')}>
-              <span className="role-badge admin">Admin</span>
-              <span>admin / admin123</span>
-            </button>
-            <button type="button" className="demo-btn employee" onClick={() => fillDemo('employee', 'emp123')}>
-              <span className="role-badge employee">Employee</span>
-              <span>employee / emp123</span>
-            </button>
-            <button type="button" className="demo-btn guest" onClick={() => fillDemo('guest', 'guest123')}>
-              <span className="role-badge guest">Guest</span>
-              <span>guest / guest123</span>
-            </button>
+        {isCloudConfigured() ? (
+          <p className="demo-credentials">
+            Sign in with an account created by your administrator.
+          </p>
+        ) : (
+          <div className="demo-credentials">
+            <p className="demo-title">Demo Accounts</p>
+            <div className="demo-buttons">
+              <button type="button" className="demo-btn admin" onClick={() => fillDemo('admin', 'admin123')}>
+                <span className="role-badge admin">Admin</span>
+                <span>admin / admin123</span>
+              </button>
+              <button type="button" className="demo-btn employee" onClick={() => fillDemo('employee', 'emp123')}>
+                <span className="role-badge employee">Employee</span>
+                <span>employee / emp123</span>
+              </button>
+              <button type="button" className="demo-btn guest" onClick={() => fillDemo('guest', 'guest123')}>
+                <span className="role-badge guest">Guest</span>
+                <span>guest / guest123</span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

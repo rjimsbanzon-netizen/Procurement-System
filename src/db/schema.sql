@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS suppliers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -39,10 +46,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders(status);
 CREATE INDEX IF NOT EXISTS idx_suppliers_status ON suppliers(status);
 
--- Seed users after deploy via POST /auth/register or localStore first-run seed.
--- Example (compute SHA-256 of password in Worker or Node):
--- INSERT INTO users (id, username, password_hash, name, email, role) VALUES
---   ('1', 'admin', '<sha256 of admin123>', 'Alex Rivera', 'alex.rivera@procurecorp.com', 'admin');
+-- Create the first cloud administrator once via POST /auth/bootstrap.

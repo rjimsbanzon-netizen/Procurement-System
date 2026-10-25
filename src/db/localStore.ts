@@ -3,7 +3,7 @@
  * Persists the DB as a binary blob in IndexedDB so data survives refresh.
  * Can export/import a .sqlite file for backup.
  */
-import type { User, UserRecord, PurchaseOrder, Supplier, CreateUserInput, UserRole } from '../types';
+import type { User, PurchaseOrder, Supplier, CreateUserInput, UserRole } from '../types';
 import { hashPassword, verifyPassword } from './hash';
 
 // sql.js types (minimal)
@@ -423,7 +423,7 @@ export const localStore = {
   async exportSqlFile(): Promise<void> {
     await initLocalDb();
     const bytes = ensureDb().export();
-    const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
+    const blob = new Blob([Uint8Array.from(bytes).buffer], { type: 'application/x-sqlite3' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

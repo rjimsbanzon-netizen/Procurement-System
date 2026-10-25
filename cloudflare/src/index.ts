@@ -5,7 +5,6 @@
 export interface Env {
   DB: D1Database;
   ALLOWED_ORIGIN?: string;
-  SESSION_SECRET?: string;
   BOOTSTRAP_SECRET?: string;
 }
 
@@ -28,7 +27,7 @@ function json(data: unknown, status = 200, headers: HeadersInit = {}): Response 
   });
 }
 
-function corsHeaders(origin: string | null, env: Env): HeadersInit {
+function corsHeaders(env: Env): HeadersInit {
   return {
     'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN ?? '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -176,7 +175,7 @@ export default {
     if (env.ALLOWED_ORIGIN && origin && origin !== env.ALLOWED_ORIGIN) {
       return json({ error: 'Origin not allowed' }, 403);
     }
-    const cors = corsHeaders(origin, env);
+    const cors = corsHeaders(env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     const { pathname } = new URL(request.url);
@@ -202,7 +201,9 @@ export default {
         }
 
         const token = newSessionToken();
-        const expiresAt = Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS;
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        await env.DB.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(nowSeconds).run();
+        const expiresAt = nowSeconds + SESSION_DURATION_SECONDS;
         await env.DB.prepare(
           'INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)'
         )
@@ -474,11 +475,7 @@ export default {
       return json({ error: 'Not found' }, 404, cors);
     } catch (error) {
       console.error(error);
-      return json(
-        { error: error instanceof Error ? error.message : 'Server error' },
-        500,
-        cors
-      );
+      return json({ error: 'Internal server error' }, 500, cors);
     }
   },
 };

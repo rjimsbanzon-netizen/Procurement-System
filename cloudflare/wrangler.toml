@@ -15,5 +15,5 @@ database_name = "procurecorp-db"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 [vars]
-# Optional: CORS origin of your Pages frontend
+# Set this to the exact origin of the deployed frontend before production deployment.
 # ALLOWED_ORIGIN = "https://your-app.pages.dev"

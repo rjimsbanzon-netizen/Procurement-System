@@ -1,17 +1,17 @@
-# ProcureCorp – Procurement System
+# ProcureCorp - Procurement System
 
-React + TypeScript procurement app with **role-based access**, **Cloudflare D1** cloud storage, and **offline SQLite** fallback.
+React + TypeScript procurement app with role-based access, Cloudflare D1 cloud storage, and an offline SQLite store.
 
 ## Storage modes
 
 | Mode | When | Where data lives |
 |------|------|------------------|
-| **Cloud** | Online + `VITE_API_URL` set + Worker healthy | Cloudflare D1 |
-| **Local** | Offline, or no API URL, or Worker unreachable | Browser SQLite (sql.js) in IndexedDB |
+| **Cloud** | Online and `VITE_API_URL` is set | Cloudflare D1 |
+| **Local** | Offline, or no API URL is configured | Browser SQLite (sql.js) in IndexedDB |
 
-Local DB can be **exported as a `.sqlite` file** (navbar → Export DB when in local mode).
+Cloud API errors are shown rather than silently saving to a different local database. Local data can be exported as a `.sqlite` file from the navbar while using local mode. Cloud and local data are separate stores; there is no automatic synchronization.
 
-## Demo accounts
+## Local demo accounts
 
 | Role | Username | Password |
 |------|----------|----------|
@@ -19,93 +19,105 @@ Local DB can be **exported as a `.sqlite` file** (navbar → Export DB when in l
 | Employee | `employee` | `emp123` |
 | Guest | `guest` | `guest123` |
 
-Admins can create new accounts under **Users**.
+These accounts are created only in the local offline database. Cloud accounts are provisioned separately; the first cloud administrator is created once during setup.
 
 ## Frontend setup
 
-```bash
+```powershell
 npm install
 npm run dev
 ```
 
-Optional cloud binding:
+## Cloudflare D1 and Worker setup
 
-```bash
-cp .env.example .env
-# edit VITE_API_URL to your Worker URL
-```
+### 1. Create and bind the D1 database
 
-## Cloudflare D1 binding (ready-to-bind)
-
-### 1. Create D1 database
-
-```bash
+```powershell
 cd cloudflare
 npm install
 npx wrangler login
 npx wrangler d1 create procurecorp-db
 ```
 
-Copy the `database_id` into `cloudflare/wrangler.toml`.
+Copy the `database_id` returned by Wrangler into `cloudflare/wrangler.toml` in place of `REPLACE_WITH_YOUR_D1_DATABASE_ID`.
 
-### 2. Apply schema
+### 2. Apply the database schema
 
-```bash
-npx wrangler d1 execute procurecorp-db --file=../src/db/schema.sql
-# or local:
-npx wrangler d1 execute procurecorp-db --local --file=../src/db/schema.sql
+From the `cloudflare` directory:
+
+```powershell
+npm run db:migrate
 ```
 
-### 3. Seed demo passwords (first deploy)
+This creates the accounts, sessions, suppliers, and purchase orders tables in D1.
 
-The schema inserts users with placeholder hashes. Prefer seeding via Worker register API, or run SQL with real SHA-256 hashes of `admin123` / `emp123` / `guest123`.  
-Offline mode seeds hashes automatically on first local open.
+### 3. Set the bootstrap secret and deploy the Worker
 
-### 4. Deploy Worker
-
-```bash
+```powershell
+npx wrangler secret put BOOTSTRAP_SECRET
 npx wrangler deploy
 ```
 
-Set frontend:
+Set `BOOTSTRAP_SECRET` to a strong, unique setup value when prompted. Configure `ALLOWED_ORIGIN` in `cloudflare/wrangler.toml` to the exact frontend origin before deploying to production.
 
-```env
-VITE_API_URL=https://procurecorp-api.<your-subdomain>.workers.dev
+### 4. Create the first administrator
+
+The bootstrap endpoint accepts only the configured secret and only works while the users table is empty. From PowerShell, substitute your deployed Worker URL and provide the account values:
+
+```powershell
+$secret = Read-Host "Bootstrap secret"
+$password = Read-Host "Administrator password"
+$body = @{
+  setupSecret = $secret
+  username = "admin"
+  password = $password
+  name = "Procurement Administrator"
+  email = "admin@example.com"
+} | ConvertTo-Json
+Invoke-RestMethod -Uri "https://procurecorp-api.YOUR_SUBDOMAIN.workers.dev/auth/bootstrap" `
+  -Method Post -ContentType "application/json" -Body $body
 ```
 
-### 5. (Optional) Cloudflare Pages
+Use this administrator account to add employee and guest accounts from the app's **Users** page.
 
-Deploy the Vite `dist/` to Pages. Set the same `VITE_API_URL` in Pages environment variables (build-time).
+### 5. Connect the frontend
 
-## Project structure
+Copy `.env.example` to `.env` in the project root and set the Worker URL:
 
+```dotenv
+VITE_API_URL=https://procurecorp-api.YOUR_SUBDOMAIN.workers.dev
 ```
-src/
-  components/     Login, Dashboard, Orders, Suppliers, Users, About, Navbar
-  context/        AuthContext (async login/register)
-  db/
-    schema.sql    Shared D1 + local schema
-    dataService.ts  Online/offline facade
-    cloudApi.ts     Fetch client for Worker
-    localStore.ts   sql.js + IndexedDB
-    hash.ts         SHA-256 (demo)
-cloudflare/
-  wrangler.toml   D1 binding
-  src/index.ts    Worker API
-```
+
+Restart Vite after changing the environment file. For Cloudflare Pages, set `VITE_API_URL` as a build-time environment variable and deploy the Vite `dist/` directory.
+
+The Worker issues expiring bearer sessions and stores only token hashes in D1. Cloud passwords are salted and hashed with PBKDF2. Protect the bootstrap secret and restrict the allowed frontend origin; never commit secrets.
 
 ## API surface (Worker)
 
-- `GET  /health`
-- `POST /auth/login` `{ username, password }`
-- `POST /auth/register` `{ username, password, name, email, role }`
-- `GET  /users`
-- `GET|POST /suppliers`
-- `DELETE /suppliers/:id`
-- `GET|POST /orders`
+- `GET /health`
+- `POST /auth/login` `{ username, password }` (returns user and bearer token)
+- `POST /auth/bootstrap` `{ setupSecret, username, password, name, email }` (one-time)
+- `POST /auth/register` `{ username, password, name, email, role }` (admin only)
+- `POST /auth/logout` (authenticated)
+- `GET /users` (admin only)
+- `GET|POST /suppliers` (staff read, admin write)
+- `DELETE /suppliers/:id` (admin only)
+- `GET|POST /orders` (staff only; employees can create pending requests, admins can update)
 
-## Notes
+## Project structure
 
-- Password hashing is SHA-256 for demo simplicity. Production should use a proper KDF (e.g. Argon2/bcrypt) inside the Worker or Cloudflare Access / Zero Trust.
-- Offline sql.js is loaded from CDN; first offline load needs network once to cache the WASM (or self-host the sql.js files under `public/`).
-- No automatic cloud↔local sync yet: choose one primary store, or export/import `.sqlite` for backups.
+```text
+src/
+  components/       Login, Dashboard, Orders, Suppliers, Users, About, Navbar
+  context/          AuthContext
+  db/
+    schema.sql      D1 schema
+    dataService.ts  Cloud/local storage selection
+    cloudApi.ts     Worker API client
+    localStore.ts   sql.js + IndexedDB offline store
+cloudflare/
+  wrangler.toml     Worker and D1 binding
+  src/index.ts      Authenticated Worker API
+```
+
+Offline sql.js is loaded from a CDN; first offline use needs network access once to cache its WASM (or self-host the sql.js files under `public/`). Cloud and offline data are not synchronized automatically; use local database export/import for local backups.

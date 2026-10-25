@@ -14,15 +14,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const saved = localStorage.getItem('procurement_user');
-    if (saved) {
+    void dataService.detectMode().then((mode) => {
+      setStorageMode(mode);
+      if (!saved) return;
       try {
-        setUser(JSON.parse(saved));
+        const restoredUser = JSON.parse(saved) as User;
+        if (mode !== 'cloud' || localStorage.getItem('procurement_cloud_token')) {
+          setUser(restoredUser);
+        } else {
+          localStorage.removeItem('procurement_user');
+        }
       } catch {
         localStorage.removeItem('procurement_user');
       }
-    }
-
-    void dataService.detectMode().then(setStorageMode);
+    });
 
     const onOnline = () => {
       setIsOnline(true);
@@ -55,6 +60,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null);
     localStorage.removeItem('procurement_user');
+    void dataService.logout().catch((error: unknown) => {
+      console.error('Failed to revoke cloud session', error);
+    });
   };
 
   const register = async (input: CreateUserInput) => {

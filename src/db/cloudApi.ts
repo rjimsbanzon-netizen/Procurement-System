@@ -6,24 +6,36 @@
 import type { User, PurchaseOrder, Supplier, CreateUserInput } from '../types';
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const SESSION_KEY = 'procurement_cloud_token';
 
 export function isCloudConfigured(): boolean {
   return Boolean(API_BASE);
 }
 
+function getSessionToken(): string | null {
+  return typeof localStorage === 'undefined' ? null : localStorage.getItem(SESSION_KEY);
+}
+
+export function clearCloudSession(): void {
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(SESSION_KEY);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!API_BASE) throw new Error('Cloud API not configured (set VITE_API_URL)');
 
+  const token = getSessionToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers ?? {}),
     },
   });
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    if (res.status === 401) clearCloudSession();
     throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
@@ -41,15 +53,17 @@ export const cloudApi = {
   },
 
   async login(username: string, password: string): Promise<User | null> {
-    try {
-      const data = await request<{ user: User | null }>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-      });
-      return data.user;
-    } catch {
-      return null;
+    const data = await request<{ user: User | null; token?: string }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    if (data.user && data.token) {
+      localStorage.setItem(SESSION_KEY, data.token);
+    } else {
+      clearCloudSession();
+      if (data.user) throw new Error('Cloud API did not return a session token');
     }
+    return data.user;
   },
 
   async register(input: CreateUserInput): Promise<{ ok: boolean; error?: string; user?: User }> {
@@ -91,5 +105,14 @@ export const cloudApi = {
       method: 'POST',
       body: JSON.stringify(o),
     });
+  },
+
+  async logout(): Promise<void> {
+    if (!getSessionToken()) return;
+    try {
+      await request('/auth/logout', { method: 'POST' });
+    } finally {
+      clearCloudSession();
+    }
   },
 };
