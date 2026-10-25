@@ -1,0 +1,19 @@
+# Cloudflare Worker + D1 binding for ProcureCorp
+# Docs: https://developers.cloudflare.com/d1/
+
+name = "procurecorp-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Create DB first:
+#   npx wrangler d1 create procurecorp-db
+# Then paste the database_id below.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "procurecorp-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[vars]
+# Optional: CORS origin of your Pages frontend
+# ALLOWED_ORIGIN = "https://your-app.pages.dev"
