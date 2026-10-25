@@ -1,0 +1,484 @@
+/**
+ * ProcureCorp API — Cloudflare Worker backed by D1.
+ */
+
+export interface Env {
+  DB: D1Database;
+  ALLOWED_ORIGIN?: string;
+  SESSION_SECRET?: string;
+  BOOTSTRAP_SECRET?: string;
+}
+
+type Role = 'admin' | 'employee' | 'guest';
+type User = {
+  id: string;
+  username: string;
+  name: string;
+  email: string;
+  role: Role;
+};
+
+const PASSWORD_ITERATIONS = 210_000;
+const SESSION_DURATION_SECONDS = 12 * 60 * 60;
+
+function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...headers },
+  });
+}
+
+function corsHeaders(origin: string | null, env: Env): HeadersInit {
+  return {
+    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN ?? '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Vary': 'Origin',
+  };
+}
+
+function isRole(value: unknown): value is Role {
+  return value === 'admin' || value === 'employee' || value === 'guest';
+}
+
+function isStatus(value: unknown): value is 'pending' | 'approved' | 'rejected' | 'completed' {
+  return value === 'pending' || value === 'approved' || value === 'rejected' || value === 'completed';
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const encoder = new TextEncoder();
+  const a = encoder.encode(left);
+  const b = encoder.encode(right);
+  let difference = a.length ^ b.length;
+  const length = Math.max(a.length, b.length);
+  for (let i = 0; i < length; i += 1) {
+    difference |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  }
+  return difference === 0;
+}
+
+async function digest(value: string): Promise<string> {
+  const result = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(result)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex: string): Uint8Array | null {
+  if (!/^(?:[0-9a-f]{2})+$/i.test(hex)) return null;
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const result = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PASSWORD_ITERATIONS },
+    key,
+    256
+  );
+  return `pbkdf2$${PASSWORD_ITERATIONS}$${bytesToHex(salt)}$${bytesToHex(new Uint8Array(result))}`;
+}
+
+async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const [scheme, iterationsText, saltHex, expectedHex] = storedHash.split('$');
+  if (scheme !== 'pbkdf2') {
+    return constantTimeEqual(await digest(password), storedHash);
+  }
+
+  const iterations = Number(iterationsText);
+  const salt = hexToBytes(saltHex ?? '');
+  const expected = hexToBytes(expectedHex ?? '');
+  if (
+    !Number.isInteger(iterations) ||
+    iterations < 1 ||
+    iterations > 1_000_000 ||
+    !salt ||
+    !expected
+  ) {
+    return false;
+  }
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const actual = new Uint8Array(
+    await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+      key,
+      expected.length * 8
+    )
+  );
+  return constantTimeEqual(bytesToHex(actual), bytesToHex(expected));
+}
+
+function newSessionToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+async function authenticate(request: Request, env: Env): Promise<User | null> {
+  const token = request.headers.get('Authorization')?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
+  if (!token) return null;
+  const row = await env.DB.prepare(
+    `SELECT users.id, users.username, users.name, users.email, users.role
+     FROM sessions JOIN users ON users.id = sessions.user_id
+     WHERE sessions.token_hash = ? AND sessions.expires_at > ?`
+  )
+    .bind(await digest(token), Math.floor(Date.now() / 1000))
+    .first<User>();
+  return row ?? null;
+}
+
+function isAdmin(user: User): boolean {
+  return user.role === 'admin';
+}
+
+function validAccount(input: {
+  username?: unknown;
+  password?: unknown;
+  name?: unknown;
+  email?: unknown;
+}): input is { username: string; password: string; name: string; email: string } {
+  return (
+    typeof input.username === 'string' &&
+    /^[a-z0-9._-]{3,32}$/i.test(input.username.trim()) &&
+    typeof input.password === 'string' &&
+    input.password.length >= 8 &&
+    input.password.length <= 256 &&
+    typeof input.name === 'string' &&
+    input.name.trim().length > 0 &&
+    input.name.trim().length <= 120 &&
+    typeof input.email === 'string' &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)
+  );
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin');
+    if (env.ALLOWED_ORIGIN && origin && origin !== env.ALLOWED_ORIGIN) {
+      return json({ error: 'Origin not allowed' }, 403);
+    }
+    const cors = corsHeaders(origin, env);
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+
+    const { pathname } = new URL(request.url);
+
+    try {
+      if (pathname === '/health' && request.method === 'GET') {
+        await env.DB.prepare('SELECT 1').first();
+        return json({ ok: true }, 200, cors);
+      }
+
+      if (pathname === '/auth/login' && request.method === 'POST') {
+        const body = (await request.json()) as { username?: unknown; password?: unknown };
+        if (typeof body.username !== 'string' || typeof body.password !== 'string') {
+          return json({ error: 'username and password required' }, 400, cors);
+        }
+        const row = await env.DB.prepare(
+          'SELECT id, username, password_hash, name, email, role FROM users WHERE username = ?'
+        )
+          .bind(body.username.trim().toLowerCase())
+          .first<User & { password_hash: string }>();
+        if (!row || !(await verifyPassword(body.password, row.password_hash))) {
+          return json({ user: null }, 200, cors);
+        }
+
+        const token = newSessionToken();
+        const expiresAt = Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS;
+        await env.DB.prepare(
+          'INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)'
+        )
+          .bind(await digest(token), row.id, expiresAt)
+          .run();
+
+        const { password_hash: _, ...user } = row;
+        return json({ user, token }, 200, cors);
+      }
+
+      if (pathname === '/auth/bootstrap' && request.method === 'POST') {
+        const body = (await request.json()) as {
+          setupSecret?: unknown;
+          username?: unknown;
+          password?: unknown;
+          name?: unknown;
+          email?: unknown;
+        };
+        if (!env.BOOTSTRAP_SECRET) {
+          return json({ error: 'Administrator bootstrap is not configured' }, 503, cors);
+        }
+        if (
+          typeof body.setupSecret !== 'string' ||
+          !constantTimeEqual(body.setupSecret, env.BOOTSTRAP_SECRET)
+        ) {
+          return json({ error: 'Invalid setup secret' }, 401, cors);
+        }
+        if (!validAccount(body)) {
+          return json({ error: 'Provide a valid username, password (at least 8 characters), name, and email' }, 400, cors);
+        }
+
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        const result = await env.DB.prepare(
+          `INSERT INTO users (id, username, password_hash, name, email, role, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, 'admin', ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`
+        )
+          .bind(
+            id,
+            body.username.trim().toLowerCase(),
+            await hashPassword(body.password),
+            body.name.trim(),
+            body.email.trim().toLowerCase(),
+            now,
+            now
+          )
+          .run();
+        if (result.meta.changes === 0) {
+          return json({ error: 'Bootstrap is only available before the first account is created' }, 409, cors);
+        }
+        return json({ ok: true, username: body.username.trim().toLowerCase() }, 201, cors);
+      }
+
+      const user = await authenticate(request, env);
+      if (!user) return json({ error: 'Authentication required' }, 401, cors);
+
+      if (pathname === '/auth/register' && request.method === 'POST') {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        const body = (await request.json()) as {
+          username?: unknown;
+          password?: unknown;
+          name?: unknown;
+          email?: unknown;
+          role?: unknown;
+        };
+        if (!validAccount(body) || !isRole(body.role)) {
+          return json({ error: 'Invalid account details or role' }, 400, cors);
+        }
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        try {
+          await env.DB.prepare(
+            `INSERT INTO users (id, username, password_hash, name, email, role, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+            .bind(
+              id,
+              body.username.trim().toLowerCase(),
+              await hashPassword(body.password),
+              body.name.trim(),
+              body.email.trim().toLowerCase(),
+              body.role,
+              now,
+              now
+            )
+            .run();
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+            return json({ ok: false, error: 'Username already exists' }, 409, cors);
+          }
+          throw error;
+        }
+        return json(
+          {
+            ok: true,
+            user: {
+              id,
+              username: body.username.trim().toLowerCase(),
+              name: body.name.trim(),
+              email: body.email.trim().toLowerCase(),
+              role: body.role,
+            },
+          },
+          201,
+          cors
+        );
+      }
+
+      if (pathname === '/users' && request.method === 'GET') {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        const { results } = await env.DB.prepare(
+          'SELECT id, username, name, email, role FROM users ORDER BY username'
+        ).all();
+        return json(results ?? [], 200, cors);
+      }
+
+      if (pathname === '/suppliers' && request.method === 'GET') {
+        if (user.role === 'guest') return json({ error: 'Staff access required' }, 403, cors);
+        const { results } = await env.DB.prepare(
+          'SELECT id, name, contact, category, rating, status FROM suppliers ORDER BY name'
+        ).all();
+        return json(results ?? [], 200, cors);
+      }
+
+      if (pathname === '/suppliers' && request.method === 'POST') {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        const s = (await request.json()) as {
+          id?: unknown;
+          name?: unknown;
+          contact?: unknown;
+          category?: unknown;
+          rating?: unknown;
+          status?: unknown;
+        };
+        if (
+          typeof s.id !== 'string' ||
+          typeof s.name !== 'string' ||
+          !s.name.trim() ||
+          typeof s.contact !== 'string' ||
+          typeof s.category !== 'string' ||
+          typeof s.rating !== 'number' ||
+          !Number.isFinite(s.rating) ||
+          s.rating < 0 ||
+          s.rating > 5 ||
+          (s.status !== 'active' && s.status !== 'inactive')
+        ) {
+          return json({ error: 'Invalid supplier details' }, 400, cors);
+        }
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO suppliers (id, name, contact, category, rating, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET name=excluded.name, contact=excluded.contact,
+           category=excluded.category, rating=excluded.rating, status=excluded.status,
+           updated_at=excluded.updated_at`
+        )
+          .bind(s.id, s.name.trim(), s.contact.trim(), s.category, s.rating, s.status, now, now)
+          .run();
+        return json({ ...s, name: s.name.trim(), contact: s.contact.trim() }, 200, cors);
+      }
+
+      if (pathname.startsWith('/suppliers/') && request.method === 'DELETE') {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        const id = decodeURIComponent(pathname.slice('/suppliers/'.length));
+        if (!id) return json({ error: 'Supplier ID required' }, 400, cors);
+        await env.DB.prepare('DELETE FROM suppliers WHERE id = ?').bind(id).run();
+        return json({ ok: true }, 200, cors);
+      }
+
+      if (pathname === '/orders' && request.method === 'GET') {
+        if (user.role === 'guest') return json({ error: 'Staff access required' }, 403, cors);
+        const { results } = await env.DB.prepare(
+          `SELECT id, title, description, amount, status, requested_by as requestedBy,
+                  requested_at as requestedAt, supplier, category
+           FROM purchase_orders ORDER BY requested_at DESC`
+        ).all();
+        return json(results ?? [], 200, cors);
+      }
+
+      if (pathname === '/orders' && request.method === 'POST') {
+        if (user.role === 'guest') return json({ error: 'Staff access required' }, 403, cors);
+        const o = (await request.json()) as {
+          id?: unknown;
+          title?: unknown;
+          description?: unknown;
+          amount?: unknown;
+          status?: unknown;
+          requestedAt?: unknown;
+          supplier?: unknown;
+          category?: unknown;
+        };
+        if (
+          typeof o.id !== 'string' ||
+          typeof o.title !== 'string' ||
+          !o.title.trim() ||
+          typeof o.description !== 'string' ||
+          typeof o.amount !== 'number' ||
+          !Number.isFinite(o.amount) ||
+          o.amount < 0 ||
+          !isStatus(o.status) ||
+          typeof o.requestedAt !== 'string' ||
+          typeof o.category !== 'string' ||
+          (o.supplier !== undefined && typeof o.supplier !== 'string')
+        ) {
+          return json({ error: 'Invalid purchase order details' }, 400, cors);
+        }
+        const existing = await env.DB.prepare('SELECT id FROM purchase_orders WHERE id = ?')
+          .bind(o.id)
+          .first();
+        if (existing && !isAdmin(user)) {
+          return json({ error: 'Only administrators can update purchase orders' }, 403, cors);
+        }
+        if (!existing && !isAdmin(user) && o.status !== 'pending') {
+          return json({ error: 'New purchase orders must be pending' }, 403, cors);
+        }
+        const now = new Date().toISOString();
+        const requestedBy = existing && isAdmin(user) ? undefined : user.name;
+        if (existing) {
+          await env.DB.prepare(
+            `UPDATE purchase_orders SET title=?, description=?, amount=?, status=?, requested_at=?,
+             supplier=?, category=?, updated_at=? WHERE id=?`
+          )
+            .bind(
+              o.title.trim(),
+              o.description,
+              o.amount,
+              o.status,
+              o.requestedAt,
+              o.supplier ?? null,
+              o.category,
+              now,
+              o.id
+            )
+            .run();
+        } else {
+          await env.DB.prepare(
+            `INSERT INTO purchase_orders
+             (id, title, description, amount, status, requested_by, requested_at, supplier, category, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+            .bind(
+              o.id,
+              o.title.trim(),
+              o.description,
+              o.amount,
+              o.status,
+              requestedBy ?? user.name,
+              o.requestedAt,
+              o.supplier ?? null,
+              o.category,
+              now,
+              now
+            )
+            .run();
+        }
+        return json({ ...o, title: o.title.trim(), requestedBy: requestedBy ?? user.name }, 200, cors);
+      }
+
+      if (pathname === '/auth/logout' && request.method === 'POST') {
+        const token = request.headers.get('Authorization')?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
+        if (token) {
+          await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?')
+            .bind(await digest(token))
+            .run();
+        }
+        return json({ ok: true }, 200, cors);
+      }
+
+      return json({ error: 'Not found' }, 404, cors);
+    } catch (error) {
+      console.error(error);
+      return json(
+        { error: error instanceof Error ? error.message : 'Server error' },
+        500,
+        cors
+      );
+    }
+  },
+};
