@@ -20,6 +20,7 @@ type User = {
   status: AccountStatus;
   department: string;
   company_name: string;
+  access_revoked: number;
 };
 
 const PASSWORD_ITERATIONS = 100_000;
@@ -144,9 +145,10 @@ async function authenticate(request: Request, env: Env): Promise<User | null> {
   if (!token) return null;
   const row = await env.DB.prepare(
     `SELECT users.id, users.username, users.name, users.email, users.role,
-            users.app_role, users.status, users.department, users.company_name
+           users.app_role, users.status, users.department, users.company_name, users.access_revoked
      FROM sessions JOIN users ON users.id = sessions.user_id
-     WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.status = 'approved'`
+    WHERE sessions.token_hash = ? AND sessions.expires_at > ?
+      AND users.status = 'approved' AND users.access_revoked = 0`
   )
     .bind(await digest(token), Math.floor(Date.now() / 1000))
     .first<User>();
@@ -259,7 +261,7 @@ export default {
           return json({ error: 'username and password required' }, 400, cors);
         }
         const row = await env.DB.prepare(
-          `SELECT id, username, password_hash, name, email, role, app_role, status, department, company_name
+          `SELECT id, username, password_hash, name, email, role, app_role, status, department, company_name, access_revoked
            FROM users WHERE username = ?`
         )
           .bind(body.username.trim().toLowerCase())
@@ -267,8 +269,8 @@ export default {
         if (!row || !(await verifyPassword(body.password, row.password_hash))) {
           return json({ user: null }, 200, cors);
         }
-        if (row.status !== 'approved') {
-          return json({ user: null, pending: row.status === 'pending' }, 200, cors);
+        if (row.status !== 'approved' || row.access_revoked) {
+          return json({ user: null, pending: row.status === 'pending', accessRevoked: Boolean(row.access_revoked) }, 200, cors);
         }
 
         const token = newSessionToken();
@@ -360,7 +362,7 @@ export default {
       if (pathname === '/users' && request.method === 'GET') {
         if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
         const { results } = await env.DB.prepare(
-          `SELECT id, username, name, email, role, app_role, status, department, company_name
+          `SELECT id, username, name, email, role, app_role, status, department, company_name, access_revoked
            FROM users ORDER BY username`
         ).all();
         return json(results ?? [], 200, cors);
@@ -369,10 +371,11 @@ export default {
       const userMatch = pathname.match(/^\/users\/([^/]+)$/);
       if (userMatch && request.method === 'PUT') {
         if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
-        const body = (await request.json()) as { status?: unknown; appRole?: unknown };
+        const body = (await request.json()) as { status?: unknown; appRole?: unknown; accessRevoked?: unknown };
         const allowedRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Supplier'];
         if (
           (body.status !== 'pending' && body.status !== 'approved' && body.status !== 'rejected') ||
+          (body.accessRevoked !== undefined && typeof body.accessRevoked !== 'boolean') ||
           (body.appRole !== undefined && (typeof body.appRole !== 'string' || !allowedRoles.includes(body.appRole)))
         ) {
           return json({ error: 'Invalid account status or role' }, 400, cors);
@@ -388,12 +391,39 @@ export default {
           `UPDATE users
            SET status = ?, app_role = COALESCE(?, app_role),
                role = CASE WHEN ? IS NULL THEN role ELSE ? END,
+               access_revoked = COALESCE(?, access_revoked),
                updated_at = ?
            WHERE id = ?`
         )
-          .bind(body.status, appRole ?? null, appRole ?? null, role, new Date().toISOString(), id)
+          .bind(
+            body.status,
+            appRole ?? null,
+            appRole ?? null,
+            role,
+            body.accessRevoked === undefined ? null : body.accessRevoked ? 1 : 0,
+            new Date().toISOString(),
+            id
+          )
           .run();
-        return json({ ok: true, id, status: body.status, appRole }, 200, cors);
+        if (body.accessRevoked === true || body.status !== 'approved') {
+          await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
+        }
+        return json({ ok: true, id, status: body.status, appRole, accessRevoked: body.accessRevoked }, 200, cors);
+      }
+
+      if (userMatch && request.method === 'DELETE') {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        const id = decodeURIComponent(userMatch[1]);
+        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(id).first<{ role: Role }>();
+        if (!target || target.role === 'admin' || id === user.id) {
+          return json({ error: 'Account cannot be deleted' }, 404, cors);
+        }
+        await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
+        const result = await env.DB.prepare('DELETE FROM users WHERE id = ? AND role != ?')
+          .bind(id, 'admin')
+          .run();
+        if (result.meta.changes !== 1) return json({ error: 'Account could not be deleted' }, 409, cors);
+        return json({ ok: true, id }, 200, cors);
       }
 
       if (pathname === '/suppliers' && request.method === 'GET') {
