@@ -17,7 +17,7 @@ type User = {
   role: Role;
 };
 
-const PASSWORD_ITERATIONS = 210_000;
+const PASSWORD_ITERATIONS = 100_000;
 const SESSION_DURATION_SECONDS = 12 * 60 * 60;
 
 function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
@@ -109,7 +109,7 @@ async function verifyPassword(password: string, storedHash: string): Promise<boo
   if (
     !Number.isInteger(iterations) ||
     iterations < 1 ||
-    iterations > 1_000_000 ||
+    iterations > PASSWORD_ITERATIONS ||
     !salt ||
     !expected
   ) {

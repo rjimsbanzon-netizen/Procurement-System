@@ -72,7 +72,7 @@ The bootstrap endpoint works only while the D1 `users` table is empty. Cloud cre
 
 The Worker URL is set in `.env.development` and `.env.production`. Run `npm run dev` for local development or `npm run build` for GitHub Pages at `/Procurement-System/`.
 
-The Worker issues expiring bearer sessions and stores only token hashes in D1. Cloud passwords are salted and hashed with PBKDF2. Protect the bootstrap secret; never commit secrets.
+The Worker issues expiring bearer sessions and stores only token hashes in D1. Cloud passwords are salted and hashed with PBKDF2 at 100,000 iterations, the maximum supported by Cloudflare Workers Web Crypto. Protect the bootstrap secret; never commit secrets.
 
 ## API surface (Worker)
 
