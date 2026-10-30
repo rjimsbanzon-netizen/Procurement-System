@@ -660,6 +660,7 @@
             }
 
             static save(state) {
+                syncRequisitionStatuses(state);
                 localStorage.setItem('eprocurement_db', JSON.stringify(state));
                 const token = CLOUD_API_BASE ? localStorage.getItem(CLOUD_TOKEN_KEY) : null;
                 if (!token) return;
@@ -814,6 +815,7 @@
             state.users = users.map(account => mapCloudUser(account, state.suppliers));
             state.currentUser = user;
             DB = state;
+            if (syncRequisitionStatuses(state)) Storage.save(state);
         }
 
         async function restoreCloudSession() {
@@ -1011,6 +1013,27 @@
             return Boolean(order && deliveries.length > 0) &&
                 deliveries.every(item => item.complianceStatus === 'Completed - Verified') &&
                 deliveries.reduce((total, item) => total + Number(item.deliveredQty || 0), 0) >= order.quantity;
+        }
+
+        function syncRequisitionStatuses(state = DB) {
+            let changed = false;
+            state.requisitions.forEach(requisition => {
+                if (['Pending', 'Rejected'].includes(requisition.status)) return;
+                const order = state.orders.find(item => item.prId === requisition.id);
+                if (!order) return;
+
+                const deliveries = state.deliveries.filter(item => item.poId === order.id);
+                const fullyVerified = deliveries.length > 0 &&
+                    deliveries.every(item => item.complianceStatus === 'Completed - Verified') &&
+                    deliveries.reduce((total, item) => total + Number(item.deliveredQty || 0), 0) >= order.quantity;
+                const payment = state.payments.find(item => item.poId === order.id);
+                const status = fullyVerified && payment?.status === 'Paid' ? 'Completed' : 'In Process';
+                if (requisition.status !== status) {
+                    requisition.status = status;
+                    changed = true;
+                }
+            });
+            return changed;
         }
 
         function getRemainingOrderQuantity(poId) {
@@ -1955,6 +1978,8 @@
                     return `<span class="px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full text-xs font-semibold inline-flex items-center"><i class="fa-solid fa-clock mr-1"></i> Pending</span>`;
                 case 'Approved':
                     return `<span class="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-semibold inline-flex items-center"><i class="fa-solid fa-circle-check mr-1"></i> Approved</span>`;
+                case 'Completed':
+                    return `<span class="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-semibold inline-flex items-center"><i class="fa-solid fa-circle-check mr-1"></i> Completed</span>`;
                 case 'In Process':
                     return `<span class="px-2.5 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-semibold inline-flex items-center"><i class="fa-solid fa-spinner fa-spin mr-1"></i> In Process</span>`;
                 case 'Rejected':
