@@ -930,7 +930,7 @@
                 case 'delivery':
                     return isSupplier
                         ? hasPermission('view_assigned_po')
-                        : hasPermission('record_delivery') || canManageDeliveryIssues();
+                        : hasPermission('view_all_po') || hasPermission('record_delivery') || canManageDeliveryIssues();
                 case 'amendments':
                     return isSupplier
                         ? hasPermission('view_assigned_po')
@@ -942,8 +942,7 @@
                 case 'suppliers': return hasPermission('manage_suppliers') || hasPermission('rate_supplier');
                 case 'audit': return DB.currentUser.role === 'Admin';
                 case 'users': return DB.currentUser.role === 'Admin' && hasPermission('manage_users');
-                case 'access_control':
-                    return DB.currentUser.role === 'Admin' && hasPermission('manage_permissions');
+                case 'access_control': return DB.currentUser.role === 'Admin';
                 default: return false;
             }
         }
@@ -2376,7 +2375,7 @@
                         <div class="flex justify-between items-center mb-6">
                             <div>
                                 <h3 class="text-lg font-bold text-slate-800">Position Accessibility Management Matrix</h3>
-                                <p class="text-xs text-slate-500">Configure role-based feature permissions dynamically across positions</p>
+                                <p class="text-xs text-slate-500">Configure role-based feature permissions. Procurement Officers are the delivery staff role; Employees are requesters. Admin access to this matrix is always retained.</p>
                             </div>
                             <button onclick="saveAccessControlMatrix()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center space-x-2">
                                 <i class="fa-solid fa-floppy-disk"></i>
@@ -2400,9 +2399,11 @@
                                             <td class="p-4 font-semibold text-slate-800 border-r border-slate-200">${action.label}</td>
                                             ${rolesList.map(role => {
                                                 const isChecked = (DB.permissions[role] || []).includes(action.key);
+                                                const isLockedAdminPermission =
+                                                    role === 'Admin' && ['manage_users', 'manage_permissions'].includes(action.key);
                                                 return `
                                                     <td class="p-4 text-center border-r border-slate-200">
-                                                        <input type="checkbox" data-role="${role}" data-action="${action.key}" ${isChecked ? 'checked' : ''} ${role === 'Admin' && action.key === 'manage_users' ? 'disabled' : ''} class="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer">
+                                                        <input type="checkbox" data-role="${role}" data-action="${action.key}" ${isChecked ? 'checked' : ''} ${isLockedAdminPermission ? 'disabled' : ''} class="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer">
                                                     </td>
                                                 `;
                                             }).join('')}
@@ -2463,7 +2464,7 @@
                         <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                             <div>
                                 <h3 class="font-bold text-slate-800">User Account & Authorization Management</h3>
-                                <p class="text-xs text-slate-500 mt-1">Review registrations and approve or reject access requests.</p>
+                                <p class="text-xs text-slate-500 mt-1">Registration creates an Employee account; assign each approved user's position here. Procurement Officer is the delivery staff role for purchase orders, delivery logging, and inspection. Role permissions can be customized in Access Control Matrix.</p>
                             </div>
                         </div>
 
@@ -2490,10 +2491,11 @@
                                                 ${u.role === 'Admin' ? `<span class="text-xs font-semibold text-slate-700">Administrator</span>` : `
                                                     <select onchange="updateUserRole('${u.id}', this.value)" class="text-xs border border-slate-300 rounded px-2 py-1 focus:ring-2 focus:ring-sky-500">
                                                         <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
-                                                        <option value="Procurement Officer" ${u.role === 'Procurement Officer' ? 'selected' : ''}>Procurement Officer</option>
+                                                        <option value="Procurement Officer" ${u.role === 'Procurement Officer' ? 'selected' : ''}>Procurement Officer / Delivery Staff</option>
                                                         <option value="Procurement Head" ${u.role === 'Procurement Head' ? 'selected' : ''}>Procurement Head</option>
                                                         <option value="Supplier" ${u.role === 'Supplier' ? 'selected' : ''}>Supplier</option>
                                                     </select>
+                                                    <p class="mt-1 max-w-xs text-[11px] text-slate-500">${getRoleAuthorizationSummary(u.role)}</p>
                                                 `}
                                             </td>
                                             <td class="p-4">
@@ -2526,6 +2528,17 @@
                     </div>
                 </div>
             `;
+        }
+
+        function getRoleAuthorizationSummary(role) {
+            switch (role) {
+                case 'Admin': return 'System administration, user verification, audit logs, and permission management.';
+                case 'Procurement Head': return 'Procurement approvals, bidding, delivery issue resolution, amendments, and payments.';
+                case 'Procurement Officer': return 'Purchase requisitions and orders, delivery logging and inspection, and supplier directory.';
+                case 'Supplier': return 'Supplier portal, bid submission, assigned orders, delivery updates, and payment status.';
+                case 'Employee':
+                default: return 'Create and track purchase requisitions for your department.';
+            }
         }
 
         // ==========================================
@@ -3536,6 +3549,7 @@
                 logAudit('User Role Updated', `User ${u.name} role changed to ${newRole}.`);
                 Storage.save(DB);
                 showToast(`User role updated to ${newRole}.`, 'info');
+                renderApp();
             }
         }
 
