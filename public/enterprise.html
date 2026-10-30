@@ -905,6 +905,35 @@
             return userPerms.includes(action);
         }
 
+        function canAccessTab(tab) {
+            if (!DB.currentUser) return false;
+            const isSupplier = DB.currentUser.role === 'Supplier';
+            switch (tab) {
+                case 'dashboard': return !isSupplier || hasPermission('view_supplier_portal');
+                case 'bidding': return isSupplier ? hasPermission('submit_bids') : canManageBidding();
+                case 'requisitions': return hasPermission('create_pr') || hasPermission('approve_pr');
+                case 'orders': return hasPermission(isSupplier ? 'view_assigned_po' : 'view_all_po');
+                case 'delivery':
+                    return isSupplier
+                        ? hasPermission('view_assigned_po')
+                        : hasPermission('record_delivery') || canManageDeliveryIssues();
+                case 'amendments':
+                    return isSupplier
+                        ? hasPermission('view_assigned_po')
+                        : canManageDeliveryIssues() || canApproveAmendments();
+                case 'payments':
+                    return isSupplier
+                        ? hasPermission('view_assigned_po')
+                        : hasPermission('process_payment') || hasPermission('confirm_payment');
+                case 'suppliers': return hasPermission('manage_suppliers') || hasPermission('rate_supplier');
+                case 'audit': return DB.currentUser.role === 'Admin';
+                case 'users': return DB.currentUser.role === 'Admin' && hasPermission('manage_users');
+                case 'access_control':
+                    return DB.currentUser.role === 'Admin' && hasPermission('manage_permissions');
+                default: return false;
+            }
+        }
+
         function canManageBidding() {
             return ['Admin', 'Procurement Head'].includes(DB.currentUser?.role) && hasPermission('manage_bidding');
         }
@@ -1280,12 +1309,11 @@
                     { id: 'suppliers', label: 'Suppliers Directory', icon: 'fa-building' }
                 ];
 
-                if (DB.currentUser.role === 'Admin') {
-                    navItems.push({ id: 'audit', label: 'Audit Logs', icon: 'fa-clock-rotate-left' });
-                    navItems.push({ id: 'users', label: 'User Verification', icon: 'fa-users-gear' });
-                    navItems.push({ id: 'access_control', label: 'Access Control Matrix', icon: 'fa-shield-halved' });
-                }
+                navItems.push({ id: 'audit', label: 'Audit Logs', icon: 'fa-clock-rotate-left' });
+                navItems.push({ id: 'users', label: 'User Verification', icon: 'fa-users-gear' });
+                navItems.push({ id: 'access_control', label: 'Access Control Matrix', icon: 'fa-shield-halved' });
             }
+            navItems = navItems.filter(item => canAccessTab(item.id));
 
             return `
                 <aside class="enterprise-sidebar w-64 h-full min-h-0 bg-slate-900 text-slate-300 flex flex-col justify-between shrink-0 overflow-hidden shadow-xl">
@@ -1330,6 +1358,14 @@
 
         // MAIN CONTENT ROUTER
         function renderMainContent() {
+            if (!canAccessTab(currentTab)) {
+                return `
+                    <div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-500">
+                        <i class="fa-solid fa-lock text-2xl mb-2"></i>
+                        <p>This section is not available for your account.</p>
+                    </div>
+                `;
+            }
             switch(currentTab) {
                 case 'dashboard': return renderDashboardView();
                 case 'bidding': return renderBiddingView();
@@ -1340,8 +1376,8 @@
                 case 'payments': return renderPaymentsView();
                 case 'suppliers': return renderSuppliersView();
                 case 'audit': return DB.currentUser.role === 'Admin' ? renderAuditView() : renderDashboardView();
-                case 'users': return renderUsersView();
-                case 'access_control': return renderAccessControlView();
+                case 'users': return canAccessTab('users') ? renderUsersView() : renderDashboardView();
+                case 'access_control': return canAccessTab('access_control') ? renderAccessControlView() : renderDashboardView();
                 default: return renderDashboardView();
             }
         }
