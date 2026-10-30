@@ -772,7 +772,7 @@
                 companyName: user.company_name || '',
                 accessRevoked: Boolean(user.access_revoked),
                 status: user.access_revoked ? 'Access Revoked' : user.status === 'pending' ? 'Pending Verification' : user.status === 'rejected' ? 'Rejected' : 'Active',
-                supplierId: supplier?.id ?? null
+                supplierId: supplier?.id ?? (role === 'Supplier' ? `supplier-${user.id}` : null)
             };
         }
 
@@ -787,6 +787,20 @@
                         throw new Error(`Cloud business data is missing ${collection}.`);
                     }
                     state[collection] = data[collection];
+                });
+            }
+            if (
+                user.role === 'Supplier' &&
+                user.supplierId &&
+                !state.suppliers.some(supplier => supplier.id === user.supplierId)
+            ) {
+                state.suppliers.push({
+                    id: user.supplierId,
+                    name: user.companyName || user.name,
+                    contact: user.name,
+                    email: user.email || '',
+                    phone: '',
+                    category: 'Registered Supplier'
                 });
             }
             if (accessControl?.permissions && typeof accessControl.permissions === 'object') {
@@ -2611,6 +2625,7 @@
                             <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs space-y-1">
                                 <p><span class="font-semibold text-slate-700">Required Target Qty:</span> ${need.targetQty} units</p>
                                 <p><span class="font-semibold text-slate-700">Max Budget Cap:</span> ₱${(need.budgetCap || 0).toLocaleString()}</p>
+                                <p><span class="font-semibold text-slate-700">Your Total Bid:</span> <span id="bid-total-preview">Enter a unit price</span></p>
                             </div>
 
                             <div class="grid grid-cols-2 gap-3">
@@ -3959,38 +3974,69 @@
 
             const submitBidForm = document.getElementById('submit-bid-form');
             if (submitBidForm) {
+                const unitPriceInput = document.getElementById('bid-unit-price');
+                const totalPreview = document.getElementById('bid-total-preview');
+                const need = DB.stockNeeds.find(s => s.id === selectedRecord);
+                unitPriceInput.addEventListener('input', () => {
+                    const unitPrice = Number(unitPriceInput.value);
+                    totalPreview.textContent = Number.isFinite(unitPrice) && unitPrice >= 0
+                        ? `₱${(unitPrice * (need?.targetQty || 0)).toLocaleString()}`
+                        : 'Enter a valid unit price';
+                });
                 submitBidForm.addEventListener('submit', (e) => {
                     e.preventDefault();
-                    const need = DB.stockNeeds.find(s => s.id === selectedRecord);
                     const supplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId);
                     const unitPrice = parseFloat(document.getElementById('bid-unit-price').value);
                     const leadTimeDays = parseInt(document.getElementById('bid-lead-time').value);
                     const notes = document.getElementById('bid-notes').value.trim();
 
-                    if (DB.currentUser.role === 'Supplier' && need?.status === 'Published' && supplier &&
-                        !DB.bids.some(item => item.needId === need.id && item.supplierId === supplier.id) &&
-                        Number.isFinite(unitPrice) && unitPrice >= 0 && Number.isInteger(leadTimeDays) && leadTimeDays > 0) {
-                        const newBid = {
-                            id: 'BID-' + (3000 + DB.bids.length + 1),
-                            needId: need.id,
-                            supplierId: supplier.id,
-                            supplierName: supplier.name,
-                            unitPrice,
-                            totalCost: unitPrice * need.targetQty,
-                            leadTimeDays,
-                            notes,
-                            submittedAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
-                            status: 'Submitted'
-                        };
-
-                        DB.bids.unshift(newBid);
-                        logAudit('Bid Submitted', `Supplier ${supplier.name} submitted bid for ${need.id}`);
-                        Storage.save(DB);
-                        showToast(`Bid submitted successfully for ${need.title}!`, 'success');
-                        closeModal();
-                    } else {
-                        showToast('The bid could not be submitted. Verify the need is open and proposal details are valid.', 'error');
+                    if (DB.currentUser.role !== 'Supplier') {
+                        showToast('Only supplier accounts can submit bids.', 'error');
+                        return;
                     }
+                    if (!need || need.status !== 'Published') {
+                        showToast('This procurement need is no longer open for bidding.', 'error');
+                        return;
+                    }
+                    if (!supplier) {
+                        showToast('Your account is missing its supplier profile. Contact the administrator to link your company profile.', 'error');
+                        return;
+                    }
+                    if (DB.bids.some(item => item.needId === need.id && item.supplierId === supplier.id)) {
+                        showToast('Your company has already submitted a bid for this procurement need.', 'error');
+                        return;
+                    }
+                    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+                        showToast('Enter a valid offered unit price in Philippine pesos.', 'error');
+                        return;
+                    }
+                    if (!Number.isInteger(leadTimeDays) || leadTimeDays <= 0) {
+                        showToast('Enter a valid delivery lead time in whole days.', 'error');
+                        return;
+                    }
+                    if (!notes) {
+                        showToast('Add product notes, warranty details, or proposal terms before submitting.', 'error');
+                        return;
+                    }
+
+                    const newBid = {
+                        id: 'BID-' + (3000 + DB.bids.length + 1),
+                        needId: need.id,
+                        supplierId: supplier.id,
+                        supplierName: supplier.name,
+                        unitPrice,
+                        totalCost: unitPrice * need.targetQty,
+                        leadTimeDays,
+                        notes,
+                        submittedAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
+                        status: 'Submitted'
+                    };
+
+                    DB.bids.unshift(newBid);
+                    logAudit('Bid Submitted', `Supplier ${supplier.name} submitted bid for ${need.id}`);
+                    Storage.save(DB);
+                    showToast(`Bid submitted successfully for ${need.title}!`, 'success');
+                    closeModal();
                 });
             }
 
