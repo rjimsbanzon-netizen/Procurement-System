@@ -1,20 +1,4 @@
 export type UserRole = 'admin' | 'employee' | 'guest';
-export type WorkflowCollection =
-  | 'requisitions'
-  | 'stockNeeds'
-  | 'bids'
-  | 'meetings'
-  | 'deliveries'
-  | 'amendments'
-  | 'payments'
-  | 'ratings'
-  | 'auditLogs'
-  | 'accessControl';
-
-export interface WorkflowRecord {
-  id: string;
-  [key: string]: string | number | boolean | null | undefined;
-}
 
 export interface User {
   id: string;
@@ -22,7 +6,6 @@ export interface User {
   name: string;
   role: UserRole;
   email: string;
-  supplierId?: string | null;
 }
 
 /** Internal user row including password hash (never expose to UI) */

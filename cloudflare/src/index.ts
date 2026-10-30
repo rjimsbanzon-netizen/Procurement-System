@@ -9,40 +9,15 @@ export interface Env {
 }
 
 type Role = 'admin' | 'employee' | 'guest';
-type AccountStatus = 'pending' | 'approved' | 'rejected';
 type User = {
   id: string;
   username: string;
   name: string;
   email: string;
   role: Role;
-  app_role: string;
-  status: AccountStatus;
-  department: string;
-  company_name: string;
-  access_revoked: number;
 };
 
-const ACCESS_CONTROL_ROLES = ['Admin', 'Procurement Head', 'Procurement Officer', 'Employee', 'Supplier'] as const;
-const ACCESS_CONTROL_ACTIONS = new Set([
-  'create_pr',
-  'approve_pr',
-  'manage_suppliers',
-  'manage_bidding',
-  'record_delivery',
-  'manage_delivery_issues',
-  'approve_amendment',
-  'process_payment',
-  'confirm_payment',
-  'rate_supplier',
-  'manage_users',
-  'manage_permissions',
-  'view_all_po',
-  'view_assigned_po',
-  'view_supplier_portal',
-  'submit_bids',
-]);
-const PASSWORD_ITERATIONS = 100_000;
+const PASSWORD_ITERATIONS = 210_000;
 const SESSION_DURATION_SECONDS = 12 * 60 * 60;
 
 function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
@@ -52,19 +27,17 @@ function json(data: unknown, status = 200, headers: HeadersInit = {}): Response 
   });
 }
 
-function corsHeaders(env: Env, origin: string | null): HeadersInit {
-  const allowedOrigins = env.ALLOWED_ORIGIN?.split(',').map((value) => value.trim()).filter(Boolean) ?? ['*'];
-  const allowedOrigin = origin && allowedOrigins.includes(origin)
-    ? origin
-    : allowedOrigins.includes('*')
-      ? '*'
-      : allowedOrigins[0] ?? '*';
+function corsHeaders(env: Env): HeadersInit {
   return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN ?? '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Vary': 'Origin',
   };
+}
+
+function isRole(value: unknown): value is Role {
+  return value === 'admin' || value === 'employee' || value === 'guest';
 }
 
 function isStatus(value: unknown): value is 'pending' | 'approved' | 'rejected' | 'completed' {
@@ -130,7 +103,7 @@ async function verifyPassword(password: string, storedHash: string): Promise<boo
   if (
     !Number.isInteger(iterations) ||
     iterations < 1 ||
-    iterations > PASSWORD_ITERATIONS ||
+    iterations > 1_000_000 ||
     !salt ||
     !expected
   ) {
@@ -163,11 +136,9 @@ async function authenticate(request: Request, env: Env): Promise<User | null> {
   const token = request.headers.get('Authorization')?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
   if (!token) return null;
   const row = await env.DB.prepare(
-    `SELECT users.id, users.username, users.name, users.email, users.role,
-           users.app_role, users.status, users.department, users.company_name, users.access_revoked
+    `SELECT users.id, users.username, users.name, users.email, users.role
      FROM sessions JOIN users ON users.id = sessions.user_id
-    WHERE sessions.token_hash = ? AND sessions.expires_at > ?
-      AND users.status = 'approved' AND users.access_revoked = 0`
+     WHERE sessions.token_hash = ? AND sessions.expires_at > ?`
   )
     .bind(await digest(token), Math.floor(Date.now() / 1000))
     .first<User>();
@@ -178,39 +149,33 @@ function isAdmin(user: User): boolean {
   return user.role === 'admin';
 }
 
-function accountValidationError(input: {
+function validAccount(input: {
   username?: unknown;
   password?: unknown;
   name?: unknown;
   email?: unknown;
-}): string | null {
-  if (typeof input.username !== 'string' || !/^[a-z0-9._-]{3,32}$/i.test(input.username.trim())) {
-    return 'Username must be 3–32 characters and contain only letters, numbers, periods, underscores, or hyphens.';
-  }
-  if (typeof input.password !== 'string' || input.password.length < 8 || input.password.length > 256) {
-    return 'Password must be between 8 and 256 characters.';
-  }
-  if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 120) {
-    return 'Full name is required and must be 120 characters or fewer.';
-  }
-  if (
-    typeof input.email !== 'string' ||
-    input.email.length > 254 ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)
-  ) {
-    return 'Enter a valid email address (254 characters or fewer).';
-  }
-  return null;
+}): input is { username: string; password: string; name: string; email: string } {
+  return (
+    typeof input.username === 'string' &&
+    /^[a-z0-9._-]{3,32}$/i.test(input.username.trim()) &&
+    typeof input.password === 'string' &&
+    input.password.length >= 8 &&
+    input.password.length <= 256 &&
+    typeof input.name === 'string' &&
+    input.name.trim().length > 0 &&
+    input.name.trim().length <= 120 &&
+    typeof input.email === 'string' &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)
+  );
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin');
-    const allowedOrigins = env.ALLOWED_ORIGIN?.split(',').map((value) => value.trim()).filter(Boolean) ?? ['*'];
-    if (origin && !allowedOrigins.includes('*') && !allowedOrigins.includes(origin)) {
+    if (env.ALLOWED_ORIGIN && origin && origin !== env.ALLOWED_ORIGIN) {
       return json({ error: 'Origin not allowed' }, 403);
     }
-    const cors = corsHeaders(env, origin);
+    const cors = corsHeaders(env);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     const { pathname } = new URL(request.url);
@@ -221,126 +186,18 @@ export default {
         return json({ ok: true }, 200, cors);
       }
 
-      if (pathname === '/auth/register' && request.method === 'POST') {
-        const body = (await request.json()) as {
-          username?: unknown;
-          password?: unknown;
-          name?: unknown;
-          email?: unknown;
-          accountType?: unknown;
-          department?: unknown;
-          companyName?: unknown;
-        };
-        const accountError = accountValidationError(body);
-        if (accountError) return json({ error: accountError }, 400, cors);
-        if (body.accountType !== 'employee' && body.accountType !== 'supplier') {
-          return json({ error: 'Choose Employee or Supplier as the account type.' }, 400, cors);
-        }
-        if (body.department !== undefined && typeof body.department !== 'string') {
-          return json({ error: 'Department must be text.' }, 400, cors);
-        }
-        if (body.companyName !== undefined && typeof body.companyName !== 'string') {
-          return json({ error: 'Supplier company name must be text.' }, 400, cors);
-        }
-        const accountType = body.accountType;
-        const appRole = accountType === 'supplier' ? 'Supplier' : 'Employee';
-        const role = accountType === 'supplier' ? 'guest' : 'employee';
-        const department = accountType === 'employee' ? (body.department as string | undefined)?.trim() ?? '' : '';
-        const companyName = accountType === 'supplier' ? (body.companyName as string | undefined)?.trim() ?? '' : '';
-        if (department.length > 120) {
-          return json({ error: 'Department must be 120 characters or fewer.' }, 400, cors);
-        }
-        if (accountType === 'supplier' && (!companyName || companyName.length > 160)) {
-          return json({ error: 'Supplier company name is required and must be 160 characters or fewer.' }, 400, cors);
-        }
-
-        const id = crypto.randomUUID();
-        const now = new Date().toISOString();
-        try {
-          await env.DB.prepare(
-            `INSERT INTO users
-             (id, username, password_hash, name, email, role, app_role, status, department, company_name, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
-          )
-            .bind(
-              id,
-              body.username.trim().toLowerCase(),
-              await hashPassword(body.password),
-              body.name.trim(),
-              body.email.trim().toLowerCase(),
-              role,
-              appRole,
-              department,
-              companyName,
-              now,
-              now
-            )
-            .run();
-        } catch (error) {
-          if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-            const existing = await env.DB.prepare(
-              `SELECT id, email, password_hash
-               FROM users
-               WHERE username = ? AND role != 'admin'
-                 AND status = 'rejected' AND access_revoked = 0`
-            )
-              .bind(body.username.trim().toLowerCase())
-              .first<{ id: string; email: string; password_hash: string }>();
-            if (
-              !existing ||
-              existing.email.toLowerCase() !== body.email.trim().toLowerCase() ||
-              !(await verifyPassword(body.password, existing.password_hash))
-            ) {
-              return json({ error: 'Username already exists. For a rejected account, use the same email and password used for the original registration.' }, 409, cors);
-            }
-
-            const updated = await env.DB.prepare(
-              `UPDATE users
-               SET name = ?, app_role = ?, role = ?, status = 'pending',
-                   department = ?, company_name = ?, updated_at = ?
-               WHERE id = ? AND status = 'rejected' AND access_revoked = 0`
-            )
-              .bind(
-                body.name.trim(),
-                appRole,
-                role,
-                department,
-                companyName,
-                now,
-                existing.id
-              )
-              .run();
-            if (updated.meta.changes !== 1) {
-              return json({ error: 'This account could not be resubmitted. Please try again or contact an administrator.' }, 409, cors);
-            }
-            return json({ ok: true, status: 'pending', reapplied: true }, 200, cors);
-          }
-          throw error;
-        }
-        return json({ ok: true, status: 'pending' }, 201, cors);
-      }
-
       if (pathname === '/auth/login' && request.method === 'POST') {
         const body = (await request.json()) as { username?: unknown; password?: unknown };
         if (typeof body.username !== 'string' || typeof body.password !== 'string') {
           return json({ error: 'username and password required' }, 400, cors);
         }
         const row = await env.DB.prepare(
-          `SELECT id, username, password_hash, name, email, role, app_role, status, department, company_name, access_revoked
-           FROM users WHERE username = ?`
+          'SELECT id, username, password_hash, name, email, role FROM users WHERE username = ?'
         )
           .bind(body.username.trim().toLowerCase())
           .first<User & { password_hash: string }>();
         if (!row || !(await verifyPassword(body.password, row.password_hash))) {
           return json({ user: null }, 200, cors);
-        }
-        if (row.status !== 'approved' || row.access_revoked) {
-          return json({
-            user: null,
-            pending: row.status === 'pending',
-            rejected: row.status === 'rejected',
-            accessRevoked: Boolean(row.access_revoked)
-          }, 200, cors);
         }
 
         const token = newSessionToken();
@@ -374,15 +231,15 @@ export default {
         ) {
           return json({ error: 'Invalid setup secret' }, 401, cors);
         }
-        const accountError = accountValidationError(body);
-        if (accountError) return json({ error: accountError }, 400, cors);
+        if (!validAccount(body)) {
+          return json({ error: 'Provide a valid username, password (at least 8 characters), name, and email' }, 400, cors);
+        }
 
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         const result = await env.DB.prepare(
-          `INSERT INTO users
-           (id, username, password_hash, name, email, role, app_role, status, department, company_name, created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, 'admin', 'Admin', 'approved', '', '', ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`
+          `INSERT INTO users (id, username, password_hash, name, email, role, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, 'admin', ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`
         )
           .bind(
             id,
@@ -403,73 +260,62 @@ export default {
       const user = await authenticate(request, env);
       if (!user) return json({ error: 'Authentication required' }, 401, cors);
 
-      if (pathname === '/auth/me' && request.method === 'GET') {
-        return json({ user }, 200, cors);
-      }
-
-      if (pathname === '/access-control' && request.method === 'GET') {
-        const row = await env.DB.prepare('SELECT data FROM access_control_settings WHERE id = 1')
-          .first<{ data: string }>();
-        if (row) return json({ permissions: JSON.parse(row.data) }, 200, cors);
-
-        const snapshot = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1')
-          .first<{ data: string }>();
-        const snapshotData: unknown = snapshot ? JSON.parse(snapshot.data) : null;
-        const legacyAccessControl =
-          snapshotData && typeof snapshotData === 'object' && !Array.isArray(snapshotData)
-            ? (snapshotData as Record<string, unknown>).accessControl
-            : null;
-        if (!Array.isArray(legacyAccessControl)) return json({ permissions: null }, 200, cors);
-
-        const permissions: Record<string, string[]> = {};
-        for (const role of ACCESS_CONTROL_ROLES) {
-          const entry = legacyAccessControl.find(
-            (item: unknown): item is Record<string, unknown> =>
-              !!item && typeof item === 'object' && !Array.isArray(item) && item.role === role
-          );
-          if (!entry || !Array.isArray(entry.permissions)) continue;
-          const rolePermissions = entry.permissions.filter(
-            (permission: unknown): permission is string =>
-              typeof permission === 'string' && ACCESS_CONTROL_ACTIONS.has(permission)
-          );
-          permissions[role] = [...new Set(rolePermissions)];
-        }
-        return json({ permissions }, 200, cors);
-      }
-
-      if (pathname === '/access-control' && request.method === 'PUT') {
+      if (pathname === '/auth/register' && request.method === 'POST') {
         if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
-        const body = (await request.json()) as { permissions?: unknown };
-        if (!body.permissions || typeof body.permissions !== 'object' || Array.isArray(body.permissions)) {
-          return json({ error: 'A role permissions object is required.' }, 400, cors);
+        const body = (await request.json()) as {
+          username?: unknown;
+          password?: unknown;
+          name?: unknown;
+          email?: unknown;
+          role?: unknown;
+        };
+        if (!validAccount(body) || !isRole(body.role)) {
+          return json({ error: 'Invalid account details or role' }, 400, cors);
         }
-        const input = body.permissions as Record<string, unknown>;
-        if (
-          Object.keys(input).length !== ACCESS_CONTROL_ROLES.length ||
-          ACCESS_CONTROL_ROLES.some(role =>
-            !Array.isArray(input[role]) ||
-            input[role].some(permission =>
-              typeof permission !== 'string' || !ACCESS_CONTROL_ACTIONS.has(permission)
-            )
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        try {
+          await env.DB.prepare(
+            `INSERT INTO users (id, username, password_hash, name, email, role, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
           )
-        ) {
-          return json({ error: 'Permissions must define every role using supported permission keys.' }, 400, cors);
+            .bind(
+              id,
+              body.username.trim().toLowerCase(),
+              await hashPassword(body.password),
+              body.name.trim(),
+              body.email.trim().toLowerCase(),
+              body.role,
+              now,
+              now
+            )
+            .run();
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+            return json({ ok: false, error: 'Username already exists' }, 409, cors);
+          }
+          throw error;
         }
-        const normalized = Object.fromEntries(
-          ACCESS_CONTROL_ROLES.map(role => [role, [...new Set(input[role] as string[])]] )
+        return json(
+          {
+            ok: true,
+            user: {
+              id,
+              username: body.username.trim().toLowerCase(),
+              name: body.name.trim(),
+              email: body.email.trim().toLowerCase(),
+              role: body.role,
+            },
+          },
+          201,
+          cors
         );
-        await env.DB.prepare(
-          `INSERT INTO access_control_settings (id, data, updated_at)
-           VALUES (1, ?, datetime('now'))
-           ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`
-        )
-          .bind(JSON.stringify(normalized))
-          .run();
-        return json({ ok: true, permissions: normalized }, 200, cors);
       }
 
-      // The authenticated workspace uses role-specific views; credentials remain in the users table.
+      // Admin-only import/export for the separate enterprise workflow dataset.
+      // Never store its local demo user accounts or plaintext passwords in D1.
       if (pathname === '/enterprise-state' && (request.method === 'GET' || request.method === 'PUT')) {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
         if (request.method === 'GET') {
           const row = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1').first<{ data: string }>();
           return json({ data: row ? JSON.parse(row.data) : null }, 200, cors);
@@ -479,13 +325,8 @@ export default {
           return json({ error: 'Invalid business dataset' }, 400, cors);
         }
         const allowed = ['stockNeeds','bids','proposalMeetings','requisitions','orders','deliveries','amendments','payments','suppliers','ratings','auditLogs'];
-        const legacyAllowed = [...allowed, 'accessControl'];
         const input = body.data as Record<string, unknown>;
-        if (
-          Object.keys(input).some(k => !legacyAllowed.includes(k)) ||
-          allowed.some(k => !Array.isArray(input[k])) ||
-          (input.accessControl !== undefined && !Array.isArray(input.accessControl))
-        ) {
+        if (Object.keys(input).some(k => !allowed.includes(k)) || allowed.some(k => !Array.isArray(input[k]))) {
           return json({ error: 'Only enterprise business record arrays are accepted' }, 400, cors);
         }
         const data = JSON.stringify(input);
@@ -497,68 +338,9 @@ export default {
       if (pathname === '/users' && request.method === 'GET') {
         if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
         const { results } = await env.DB.prepare(
-          `SELECT id, username, name, email, role, app_role, status, department, company_name, access_revoked
-           FROM users ORDER BY username`
+          'SELECT id, username, name, email, role FROM users ORDER BY username'
         ).all();
         return json(results ?? [], 200, cors);
-      }
-
-      const userMatch = pathname.match(/^\/users\/([^/]+)$/);
-      if (userMatch && request.method === 'PUT') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
-        const body = (await request.json()) as { status?: unknown; appRole?: unknown; accessRevoked?: unknown };
-        const allowedRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Supplier'];
-        if (
-          (body.status !== 'pending' && body.status !== 'approved' && body.status !== 'rejected') ||
-          (body.accessRevoked !== undefined && typeof body.accessRevoked !== 'boolean') ||
-          (body.appRole !== undefined && (typeof body.appRole !== 'string' || !allowedRoles.includes(body.appRole)))
-        ) {
-          return json({ error: 'Invalid account status or role' }, 400, cors);
-        }
-        const id = decodeURIComponent(userMatch[1]);
-        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(id).first<{ role: Role }>();
-        if (!target || target.role === 'admin' || id === user.id) {
-          return json({ error: 'Account cannot be modified' }, 404, cors);
-        }
-        const appRole = body.appRole as string | undefined;
-        const role = appRole === 'Supplier' ? 'guest' : 'employee';
-        await env.DB.prepare(
-          `UPDATE users
-           SET status = ?, app_role = COALESCE(?, app_role),
-               role = CASE WHEN ? IS NULL THEN role ELSE ? END,
-               access_revoked = COALESCE(?, access_revoked),
-               updated_at = ?
-           WHERE id = ?`
-        )
-          .bind(
-            body.status,
-            appRole ?? null,
-            appRole ?? null,
-            role,
-            body.accessRevoked === undefined ? null : body.accessRevoked ? 1 : 0,
-            new Date().toISOString(),
-            id
-          )
-          .run();
-        if (body.accessRevoked === true || body.status !== 'approved') {
-          await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
-        }
-        return json({ ok: true, id, status: body.status, appRole, accessRevoked: body.accessRevoked }, 200, cors);
-      }
-
-      if (userMatch && request.method === 'DELETE') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
-        const id = decodeURIComponent(userMatch[1]);
-        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(id).first<{ role: Role }>();
-        if (!target || target.role === 'admin' || id === user.id) {
-          return json({ error: 'Account cannot be deleted' }, 404, cors);
-        }
-        await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
-        const result = await env.DB.prepare('DELETE FROM users WHERE id = ? AND role != ?')
-          .bind(id, 'admin')
-          .run();
-        if (result.meta.changes !== 1) return json({ error: 'Account could not be deleted' }, 409, cors);
-        return json({ ok: true, id }, 200, cors);
       }
 
       if (pathname === '/suppliers' && request.method === 'GET') {

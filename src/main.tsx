@@ -1,18 +1,6 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './styles/enterprise.css';
 
-declare global {
-  interface Window {
-    procurecorpApiBase?: string
-  }
-}
-
-window.procurecorpApiBase = import.meta.env.VITE_API_URL || ''
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />);

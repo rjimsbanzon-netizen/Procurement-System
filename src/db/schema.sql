@@ -9,11 +9,6 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'guest')),
-  app_role TEXT NOT NULL DEFAULT 'Employee' CHECK (app_role IN ('Admin', 'Employee', 'Procurement Officer', 'Procurement Head', 'Supplier')),
-  status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('pending', 'approved', 'rejected')),
-  department TEXT NOT NULL DEFAULT '',
-  company_name TEXT NOT NULL DEFAULT '',
-  access_revoked INTEGER NOT NULL DEFAULT 0 CHECK (access_revoked IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -59,12 +54,6 @@ CREATE INDEX IF NOT EXISTS idx_suppliers_status ON suppliers(status);
 
 -- Enterprise workspace snapshot (business records only; no credentials)
 CREATE TABLE IF NOT EXISTS enterprise_state (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  data TEXT NOT NULL,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS access_control_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   data TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))

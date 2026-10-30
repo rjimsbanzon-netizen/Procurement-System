@@ -3,15 +3,7 @@
  * Persists the DB as a binary blob in IndexedDB so data survives refresh.
  * Can export/import a .sqlite file for backup.
  */
-import type {
-  User,
-  PurchaseOrder,
-  Supplier,
-  CreateUserInput,
-  UserRole,
-  WorkflowCollection,
-  WorkflowRecord,
-} from '../types';
+import type { User, PurchaseOrder, Supplier, CreateUserInput, UserRole } from '../types';
 import { hashPassword, verifyPassword } from './hash';
 
 // sql.js types (minimal)
@@ -129,12 +121,6 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS workflow_records (
-  collection TEXT NOT NULL,
-  id TEXT NOT NULL,
-  data TEXT NOT NULL,
-  PRIMARY KEY (collection, id)
-);
 `;
 
 async function seedIfEmpty(database: SqlJsDatabase) {
@@ -145,6 +131,8 @@ async function seedIfEmpty(database: SqlJsDatabase) {
   const now = new Date().toISOString();
   const seeds: [string, string, string, string, string, UserRole][] = [
     ['1', 'admin', 'admin123', 'Alex Rivera', 'alex.rivera@procurecorp.com', 'admin'],
+    ['2', 'employee', 'emp123', 'Jordan Lee', 'jordan.lee@procurecorp.com', 'employee'],
+    ['3', 'guest', 'guest123', 'Guest User', 'guest@example.com', 'guest'],
   ];
   for (const [id, username, pass, name, email, role] of seeds) {
     const hash = await hashPassword(pass);
@@ -227,28 +215,6 @@ async function seedIfEmpty(database: SqlJsDatabase) {
   }
 }
 
-function removeNonAdminUsersOnce(database: SqlJsDatabase): void {
-  const version = Number(database.exec('PRAGMA user_version')[0]?.values[0]?.[0] ?? 0);
-  if (version >= 1) return;
-
-  const rows = database.exec("SELECT COUNT(*) AS count FROM users WHERE role != 'admin'");
-  const removedCount = Number(rows[0]?.values[0]?.[0] ?? 0);
-  database.run("DELETE FROM users WHERE role != 'admin'");
-  database.run('PRAGMA user_version = 1');
-  if (removedCount > 0 && typeof localStorage !== 'undefined') {
-    const savedUser = localStorage.getItem('procurement_user');
-    if (savedUser) {
-      try {
-        if ((JSON.parse(savedUser) as User).role !== 'admin') {
-          localStorage.removeItem('procurement_user');
-        }
-      } catch {
-        localStorage.removeItem('procurement_user');
-      }
-    }
-  }
-}
-
 async function persist() {
   if (!db) return;
   const bytes = db.export();
@@ -263,7 +229,6 @@ export async function initLocalDb(): Promise<void> {
     db = bytes ? new sqljs.Database(bytes) : new sqljs.Database();
     db.run(SCHEMA);
     await seedIfEmpty(db);
-    removeNonAdminUsersOnce(db);
     await persist();
   })();
   return ready;
@@ -452,28 +417,6 @@ export const localStore = {
     }
     await persist();
     return o;
-  },
-
-  async listWorkflowRecords(collection: WorkflowCollection): Promise<WorkflowRecord[]> {
-    await initLocalDb();
-    return queryAll<{ data: string }>(
-      'SELECT data FROM workflow_records WHERE collection = ? ORDER BY rowid DESC',
-      [collection]
-    ).map(({ data }) => JSON.parse(data) as WorkflowRecord);
-  },
-
-  async upsertWorkflowRecord(
-    collection: WorkflowCollection,
-    record: WorkflowRecord
-  ): Promise<WorkflowRecord> {
-    await initLocalDb();
-    ensureDb().run(
-      `INSERT INTO workflow_records (collection, id, data) VALUES (?, ?, ?)
-       ON CONFLICT(collection, id) DO UPDATE SET data = excluded.data`,
-      [collection, record.id, JSON.stringify(record)]
-    );
-    await persist();
-    return record;
   },
 
   /** Export current DB as a downloadable .sqlite file */

@@ -12,8 +12,8 @@ compatibility_date = "2024-11-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "procurecorp-db"
-database_id = "1dca6a5f-bc28-46c6-9ac2-8cec53f9b882"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 [vars]
-# Comma-separated frontend origins; use the hostname origin, without a path.
-ALLOWED_ORIGIN = "https://rjimsbanzon-netizen.github.io,http://localhost:5173,http://127.0.0.1:5173"
+# Set this to the exact origin of the deployed frontend before production deployment.
+# ALLOWED_ORIGIN = "https://your-app.pages.dev"

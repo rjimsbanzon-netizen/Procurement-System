@@ -42,7 +42,7 @@ export default function Login({ onSuccess }: LoginProps) {
     <div className="login-page">
       <div className="login-card">
         <div className="login-header">
-          <div className="logo-mark">P</div>
+          <div className="logo-mark"></div>
           <h1>ProcureFlow</h1>
           <p className="subtitle">Enterprise Procurement System</p>
           <p className="storage-badge">
