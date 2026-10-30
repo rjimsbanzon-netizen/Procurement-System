@@ -1,12 +1,40 @@
-/**
- * Cloudflare D1 API client.
- * Point VITE_API_URL at your Worker (e.g. https://procurecorp-api.YOUR.workers.dev)
- * Worker binds D1 via wrangler.toml [[d1_databases]].
- */
-import type { User, PurchaseOrder, Supplier, CreateUserInput } from '../types';
+
+import type {
+  User,
+  PurchaseOrder,
+  Supplier,
+  CreateUserInput,
+  WorkflowCollection,
+  WorkflowRecord,
+} from '../types';
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 const SESSION_KEY = 'procurement_cloud_token';
+const WORKFLOW_COLLECTION_KEYS: Record<WorkflowCollection, string> = {
+  requisitions: 'requisitions',
+  stockNeeds: 'stockNeeds',
+  bids: 'bids',
+  meetings: 'proposalMeetings',
+  deliveries: 'deliveries',
+  amendments: 'amendments',
+  payments: 'payments',
+  ratings: 'ratings',
+  auditLogs: 'auditLogs',
+  accessControl: 'accessControl',
+};
+
+function emptyEnterpriseState(): Record<string, WorkflowRecord[]> {
+  const collections = [
+    ...new Set([
+      ...Object.values(WORKFLOW_COLLECTION_KEYS),
+      'orders',
+      'suppliers',
+    ]),
+  ];
+  return Object.fromEntries(
+    collections.map((collection) => [collection, []])
+  );
+}
 
 export function isCloudConfigured(): boolean {
   return Boolean(API_BASE);
@@ -105,6 +133,52 @@ export const cloudApi = {
       method: 'POST',
       body: JSON.stringify(o),
     });
+  },
+
+  async getEnterpriseState(): Promise<Record<string, unknown> | null> {
+    const response = await request<{ data: Record<string, unknown> | null }>('/enterprise-state');
+    return response.data;
+  },
+
+  async putEnterpriseState(data: Record<string, unknown>): Promise<void> {
+    await request('/enterprise-state', { method: 'PUT', body: JSON.stringify({ data }) });
+  },
+
+  async listWorkflowRecords(collection: WorkflowCollection): Promise<WorkflowRecord[]> {
+    const data = {
+      ...emptyEnterpriseState(),
+      ...((await cloudApi.getEnterpriseState()) ?? {}),
+    };
+    const records = data[WORKFLOW_COLLECTION_KEYS[collection]];
+    if (!Array.isArray(records)) return [];
+    return records as WorkflowRecord[];
+  },
+
+  async upsertWorkflowRecord(
+    collection: WorkflowCollection,
+    record: WorkflowRecord
+  ): Promise<WorkflowRecord> {
+    const data = {
+      ...emptyEnterpriseState(),
+      ...((await cloudApi.getEnterpriseState()) ?? {}),
+    };
+    const key = WORKFLOW_COLLECTION_KEYS[collection];
+    const existing = data[key];
+    if (!Array.isArray(existing)) {
+      throw new Error(`Cloud workflow collection "${collection}" is invalid.`);
+    }
+    data[key] = [
+      ...existing.filter(
+        (item): item is WorkflowRecord =>
+          typeof item === 'object' &&
+          item !== null &&
+          !Array.isArray(item) &&
+          (item as WorkflowRecord).id !== record.id
+      ),
+      record,
+    ];
+    await this.putEnterpriseState(data);
+    return record;
   },
 
   async logout(): Promise<void> {

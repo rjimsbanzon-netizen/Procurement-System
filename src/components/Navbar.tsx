@@ -21,7 +21,7 @@ export default function Navbar({ activeView, onNavigate }: NavbarProps) {
     <nav className="navbar">
       <div className="nav-brand">
         <div className="logo-mark small">P</div>
-        <span>ProcureCorp</span>
+        <span>ProcureFlow</span>
       </div>
 
       <div className="nav-links">

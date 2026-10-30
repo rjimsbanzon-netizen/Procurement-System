@@ -43,7 +43,7 @@ export default function Login({ onSuccess }: LoginProps) {
       <div className="login-card">
         <div className="login-header">
           <div className="logo-mark">P</div>
-          <h1>ProcureCorp</h1>
+          <h1>ProcureFlow</h1>
           <p className="subtitle">Enterprise Procurement System</p>
           <p className="storage-badge">
             {isOnline ? 'Online' : 'Offline'} · {storageMode === 'cloud' ? 'Cloudflare D1' : 'Local SQLite'}

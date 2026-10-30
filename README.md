@@ -16,10 +16,8 @@ Cloud API errors are shown rather than silently saving to a different local data
 | Role | Username | Password |
 |------|----------|----------|
 | Admin | `admin` | `admin123` |
-| Employee | `employee` | `emp123` |
-| Guest | `guest` | `guest123` |
 
-These accounts are created only in the local offline database. Cloud accounts are provisioned separately; the first cloud administrator is created once during setup.
+The admin account is created only in the local offline database. Cloud accounts are provisioned separately; the first cloud administrator is created once during setup.
 
 ## Frontend setup
 
@@ -30,67 +28,52 @@ npm run dev
 
 ## Cloudflare D1 and Worker setup
 
-### 1. Create and bind the D1 database
+### 1. Use the provisioned D1 database
 
 ```powershell
 cd cloudflare
-npm install
-npx wrangler login
-npx wrangler d1 create procurecorp-db
+npx wrangler whoami
 ```
 
-Copy the `database_id` returned by Wrangler into `cloudflare/wrangler.toml` in place of `REPLACE_WITH_YOUR_D1_DATABASE_ID`.
+The APAC database `procurecorp-db` is bound in `cloudflare/wrangler.toml` and its schema is applied. The deployed Worker is `https://procurecorp-api.rjimsbanzon.workers.dev`; it allows the GitHub Pages site and local Vite development origins.
 
-### 2. Apply the database schema
+### 2. Create the first cloud administrator
 
-From the `cloudflare` directory:
-
-```powershell
-npm run db:migrate
-```
-
-This creates the accounts, sessions, suppliers, and purchase orders tables in D1.
-
-### 3. Set the bootstrap secret and deploy the Worker
-
+Set a one-time bootstrap secret from the `cloudflare` directory:
 ```powershell
 npx wrangler secret put BOOTSTRAP_SECRET
-npx wrangler deploy
 ```
 
-Set `BOOTSTRAP_SECRET` to a strong, unique setup value when prompted. Configure `ALLOWED_ORIGIN` in `cloudflare/wrangler.toml` to the exact frontend origin before deploying to production.
-
-### 4. Create the first administrator
-
-The bootstrap endpoint accepts only the configured secret and only works while the users table is empty. From PowerShell, substitute your deployed Worker URL and provide the account values:
+Then run this PowerShell script locally. It prompts for the secret and administrator password; never put either value in source control or chat:
 
 ```powershell
 $secret = Read-Host "Bootstrap secret"
-$password = Read-Host "Administrator password"
-$body = @{
-  setupSecret = $secret
-  username = "admin"
-  password = $password
-  name = "Procurement Administrator"
-  email = "admin@example.com"
-} | ConvertTo-Json
-Invoke-RestMethod -Uri "https://procurecorp-api.YOUR_SUBDOMAIN.workers.dev/auth/bootstrap" `
-  -Method Post -ContentType "application/json" -Body $body
+$securePassword = Read-Host "New administrator password" -AsSecureString
+$passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+try {
+  $password = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
+  $body = @{
+    setupSecret = $secret
+    username = "admin"
+    password = $password
+    name = "Procurement Administrator"
+    email = "admin@example.com"
+  } | ConvertTo-Json
+  Invoke-RestMethod -Uri "https://procurecorp-api.rjimsbanzon.workers.dev/auth/bootstrap" `
+    -Method Post -ContentType "application/json" -Body $body
+} finally {
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+  Remove-Variable password -ErrorAction SilentlyContinue
+}
 ```
 
-Use this administrator account to add employee and guest accounts from the app's **Users** page.
+The bootstrap endpoint works only while the D1 `users` table is empty. Cloud credentials are stored separately from Enterprise business records.
 
-### 5. Connect the frontend
+### 3. Run or build the frontend
 
-Copy `.env.example` to `.env` in the project root and set the Worker URL:
+The Worker URL is set in `.env.development` and `.env.production`. Run `npm run dev` for local development or `npm run build` for GitHub Pages at `/Procurement-System/`.
 
-```dotenv
-VITE_API_URL=https://procurecorp-api.YOUR_SUBDOMAIN.workers.dev
-```
-
-Restart Vite after changing the environment file. For Cloudflare Pages, set `VITE_API_URL` as a build-time environment variable and deploy the Vite `dist/` directory.
-
-The Worker issues expiring bearer sessions and stores only token hashes in D1. Cloud passwords are salted and hashed with PBKDF2. Protect the bootstrap secret and restrict the allowed frontend origin; never commit secrets.
+The Worker issues expiring bearer sessions and stores only token hashes in D1. Cloud passwords are salted and hashed with PBKDF2. Protect the bootstrap secret; never commit secrets.
 
 ## API surface (Worker)
 
@@ -121,3 +104,28 @@ cloudflare/
 ```
 
 Offline sql.js is loaded from a CDN; first offline use needs network access once to cache its WASM (or self-host the sql.js files under `public/`). Cloud and offline data are not synchronized automatically; use local database export/import for local backups.
+
+## Combined enterprise interface (new)
+
+The homepage now opens **Enterprise Workspace**, which preserves the supplied standalone HTML interface and its workflows. The **Original Project Modules** tab keeps the React application unchanged (apart from the workspace switcher): authentication, users, suppliers, purchase orders, original dashboard and existing Cloudflare/SQLite data service.
+
+These are **two separate application datasets**, not one automatically merged record model. With `VITE_API_URL` configured, the Enterprise Workspace signs in through the Cloudflare Worker and stores business records in D1; browser storage is only a local cache. Without the API URL, it uses the original browser-local account and data store. Cloud mode does not accept local demo credentials.
+
+### Enterprise procurement lifecycle
+
+1. An employee creates a Purchase Request; the Procurement Head or Admin approves it and publishes its linked procurement need.
+2. Suppliers apply with bids. The Procurement Head or Admin selects a supplier, schedules an online or face-to-face discussion, and records the agreed price, quantity, specifications, and terms.
+3. Issuing the resulting Purchase Order moves it to **Awaiting Supplier Signature**. The assigned supplier must accept and sign it before staff can log a delivery.
+4. Procurement staff inspect deliveries. Payment is enabled only when the full ordered quantity has been received and every delivery is marked **Completed - Verified**.
+5. For a delivery issue, the Procurement Head or Admin issues an amendment; the supplier submits an explanation, management reviews it, and staff reinspect before payment.
+6. Supplier evaluation becomes available after a transaction is paid and verified.
+
+The supplier PO-signing action records the signed-in supplier account and timestamp; it is an in-app acceptance record, not a cryptographic or legally certified digital signature.
+
+### Enterprise D1 storage
+
+After signing in as the Cloudflare Admin, Enterprise business-record changes are saved to an Admin-only D1 snapshot and restored on the next sign-in. The snapshot contains stock needs, bids, meetings, requisitions, orders, deliveries, amendments, payments, suppliers, ratings, audit logs, and access-control records. Resetting the Enterprise database clears business records and audit history but keeps the Admin account.
+
+### Local development
+
+From the project root: `npm ci`, then `npm run dev`. Browse the displayed local URL. For cloud features, also configure `.env` and run the Worker separately as documented above.

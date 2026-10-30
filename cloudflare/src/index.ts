@@ -27,9 +27,15 @@ function json(data: unknown, status = 200, headers: HeadersInit = {}): Response 
   });
 }
 
-function corsHeaders(env: Env): HeadersInit {
+function corsHeaders(env: Env, origin: string | null): HeadersInit {
+  const allowedOrigins = env.ALLOWED_ORIGIN?.split(',').map((value) => value.trim()).filter(Boolean) ?? ['*'];
+  const allowedOrigin = origin && allowedOrigins.includes(origin)
+    ? origin
+    : allowedOrigins.includes('*')
+      ? '*'
+      : allowedOrigins[0] ?? '*';
   return {
-    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN ?? '*',
+    'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Vary': 'Origin',
@@ -172,10 +178,11 @@ function validAccount(input: {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin');
-    if (env.ALLOWED_ORIGIN && origin && origin !== env.ALLOWED_ORIGIN) {
+    const allowedOrigins = env.ALLOWED_ORIGIN?.split(',').map((value) => value.trim()).filter(Boolean) ?? ['*'];
+    if (origin && !allowedOrigins.includes('*') && !allowedOrigins.includes(origin)) {
       return json({ error: 'Origin not allowed' }, 403);
     }
-    const cors = corsHeaders(env);
+    const cors = corsHeaders(env, origin);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     const { pathname } = new URL(request.url);
@@ -310,6 +317,29 @@ export default {
           201,
           cors
         );
+      }
+
+      // Admin-only import/export for the separate enterprise workflow dataset.
+      // Never store its local demo user accounts or plaintext passwords in D1.
+      if (pathname === '/enterprise-state' && (request.method === 'GET' || request.method === 'PUT')) {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        if (request.method === 'GET') {
+          const row = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1').first<{ data: string }>();
+          return json({ data: row ? JSON.parse(row.data) : null }, 200, cors);
+        }
+        const body = (await request.json()) as { data?: unknown };
+        if (!body || typeof body.data !== 'object' || !body.data || Array.isArray(body.data)) {
+          return json({ error: 'Invalid business dataset' }, 400, cors);
+        }
+        const allowed = ['stockNeeds','bids','proposalMeetings','requisitions','orders','deliveries','amendments','payments','suppliers','ratings','auditLogs','accessControl'];
+        const input = body.data as Record<string, unknown>;
+        if (Object.keys(input).some(k => !allowed.includes(k)) || allowed.some(k => !Array.isArray(input[k]))) {
+          return json({ error: 'Only enterprise business record arrays are accepted' }, 400, cors);
+        }
+        const data = JSON.stringify(input);
+        if (data.length > 1000000) return json({ error: 'Dataset too large' }, 413, cors);
+        await env.DB.prepare("INSERT INTO enterprise_state (id, data, updated_at) VALUES (1, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')").bind(data).run();
+        return json({ ok: true }, 200, cors);
       }
 
       if (pathname === '/users' && request.method === 'GET') {

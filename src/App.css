@@ -1,19 +1,19 @@
 /* ===== Design tokens ===== */
 :root {
-  --bg: #0f1419;
-  --bg-elevated: #1a2332;
-  --bg-card: #1e2a3a;
-  --border: #2d3a4f;
-  --text: #e8eef7;
-  --text-muted: #8b9cb3;
-  --primary: #3b82f6;
-  --primary-hover: #2563eb;
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --radius: 10px;
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
-  --font: 'Inter', system-ui, -apple-system, sans-serif;
+  --bg: #f2efe7;
+  --bg-elevated: #fffdf8;
+  --bg-card: #f8f5ed;
+  --border: #d9d3c5;
+  --text: #272d28;
+  --text-muted: #74786d;
+  --primary: #a64f32;
+  --primary-hover: #873e27;
+  --success: #39705c;
+  --warning: #a66a1f;
+  --danger: #a94339;
+  --radius: 4px;
+  --shadow: 0 12px 35px rgba(43, 42, 34, 0.12);
+  --font: 'Open Sans', system-ui, sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -40,7 +40,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .nav-brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.02em; }
 .logo-mark {
-  width: 36px; height: 36px; background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  width: 36px; height: 36px; background: #a64f32;
   border-radius: 8px; display: flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 1.1rem; color: white;
 }
@@ -93,8 +93,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .login-page {
   min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem;
-  background: radial-gradient(ellipse at 20% 20%, rgba(59,130,246,0.12) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(139,92,246,0.1) 0%, transparent 50%), var(--bg);
+  background: var(--bg);
 }
 .login-card {
   width: 100%; max-width: 420px; background: var(--bg-elevated);
@@ -151,7 +150,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .data-table td { padding: 0.85rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: rgba(255,255,255,0.02); }
-.mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.82rem; }
+.mono { font-family: var(--font); font-size: 0.82rem; font-variant-numeric: tabular-nums; }
 .cell-title { font-weight: 600; }
 .cell-sub { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.15rem; }
 .empty-cell { text-align: center; color: var(--text-muted); padding: 2rem !important; }
@@ -323,4 +322,244 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: rgba(245, 158, 11, 0.15);
   color: #fbbf24;
   border-color: rgba(245, 158, 11, 0.3);
+}
+
+/* Shared paper-and-ink theme for the enterprise experience. */
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.navbar {
+  background: #252d28;
+  color: #f7f3e9;
+  border-color: #3a433b;
+}
+
+.nav-brand {
+  letter-spacing: 0.01em;
+}
+
+.logo-mark {
+  background: #a64f32;
+  border-radius: 3px;
+}
+
+.nav-link {
+  border-radius: 2px;
+}
+
+.app-shell { min-height: 100%; }
+
+.main-content {
+  max-width: 1440px;
+  padding: 2.25rem clamp(1.25rem, 4vw, 3.75rem) 4rem;
+}
+
+.navbar {
+  position: sticky;
+  box-shadow: 0 4px 18px rgba(30, 35, 29, 0.12);
+}
+
+.nav-link {
+  color: #c3c6b9;
+}
+
+.nav-link:hover {
+  color: #fffdf8;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.nav-link.active {
+  color: #f0b89d;
+  background: rgba(166, 79, 50, 0.24);
+}
+
+.logo-mark {
+  color: #fffaf0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.page-header h1,
+.login-header h1,
+.panel h2 {
+  font-family: var(--font);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.page-header h1 {
+  font-size: clamp(2rem, 3vw, 2.65rem);
+}
+
+.page-header {
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+.panel,
+.stat-card,
+.supplier-card,
+.feature-card,
+.action-card {
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(49, 47, 38, 0.04);
+}
+
+.panel,
+.stat-card,
+.supplier-card {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+
+.panel {
+  padding: 1.5rem clamp(1rem, 2.5vw, 2rem);
+}
+
+.panel h2 {
+  font-size: 1.45rem;
+}
+
+.stat-card {
+  border-top: 3px solid #a64f32;
+}
+
+.stat-label,
+.text-muted,
+.subtitle,
+.stat-hint {
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+}
+
+.action-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.action-card,
+.feature-card {
+  background: #f6f2e9;
+  border-color: #e2dccf;
+}
+
+.data-table th {
+  color: #686e61;
+  border-color: var(--border);
+}
+
+.data-table td {
+  border-color: #e7e2d7;
+}
+
+.data-table tr:hover td {
+  background: #f8f3e9;
+}
+
+.btn,
+.filter-btn,
+.demo-btn {
+  border-radius: 3px;
+}
+
+.btn-primary {
+  background: var(--primary);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.btn-outline {
+  border-color: #59645a;
+  color: #f5f0e6;
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #a9ad9f;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  background: #fffdf8;
+  border-color: #d2ccbe;
+  border-radius: 3px;
+  color: var(--text);
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(166, 79, 50, 0.12);
+}
+
+.login-page {
+  background:
+    linear-gradient(118deg, rgba(38, 46, 39, 0.96) 0 42%, transparent 42%),
+    #e8e1d3;
+}
+
+.login-card {
+  background: #fffdf8;
+  border-color: #d8d0c0;
+  border-radius: 4px;
+  box-shadow: 0 20px 55px rgba(27, 32, 27, 0.2);
+}
+
+.login-header .logo-mark {
+  border-radius: 3px;
+}
+
+.demo-credentials {
+  border-color: var(--border);
+}
+
+.demo-btn {
+  background: #f8f5ed;
+  border-color: #ded8cb;
+  color: var(--text);
+}
+
+.demo-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.modal-overlay {
+  background: rgba(27, 32, 27, 0.68);
+}
+
+.modal-dialog {
+  border-radius: 4px;
+}
+
+:focus-visible {
+  outline: 2px solid #c06b49;
+  outline-offset: 3px;
+}
+
+.enterprise-frame {
+  display: block;
+  width: 100%;
+  height: 100vh;
+  border: 0;
+  background: #f2efe7;
+}
+
+@media (max-width: 768px) {
+  .action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .login-page {
+    background: #e8e1d3;
+  }
 }

@@ -1,8 +1,12 @@
-/**
- * Unified data service: uses Cloudflare D1 when online + configured,
- * otherwise falls back to local SQLite (sql.js) persisted in IndexedDB.
- */
-import type { User, PurchaseOrder, Supplier, CreateUserInput } from '../types';
+
+import type {
+  User,
+  PurchaseOrder,
+  Supplier,
+  CreateUserInput,
+  WorkflowCollection,
+  WorkflowRecord,
+} from '../types';
 import { cloudApi, clearCloudSession, isCloudConfigured } from './cloudApi';
 import { localStore, initLocalDb } from './localStore';
 
@@ -86,6 +90,21 @@ export const dataService = {
     await detectStorageMode();
     if (isUsingCloud()) return cloudApi.upsertOrder(o);
     return localStore.upsertOrder(o);
+  },
+
+  async listWorkflowRecords(collection: WorkflowCollection): Promise<WorkflowRecord[]> {
+    await detectStorageMode();
+    if (isUsingCloud()) return cloudApi.listWorkflowRecords(collection);
+    return localStore.listWorkflowRecords(collection);
+  },
+
+  async upsertWorkflowRecord(
+    collection: WorkflowCollection,
+    record: WorkflowRecord
+  ): Promise<WorkflowRecord> {
+    await detectStorageMode();
+    if (isUsingCloud()) return cloudApi.upsertWorkflowRecord(collection, record);
+    return localStore.upsertWorkflowRecord(collection, record);
   },
 
   async logout(): Promise<void> {
