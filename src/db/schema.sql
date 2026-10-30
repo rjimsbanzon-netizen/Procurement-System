@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'guest')),
+  app_role TEXT NOT NULL DEFAULT 'Employee' CHECK (app_role IN ('Admin', 'Employee', 'Procurement Officer', 'Procurement Head', 'Supplier')),
+  status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('pending', 'approved', 'rejected')),
+  department TEXT NOT NULL DEFAULT '',
+  company_name TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

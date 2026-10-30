@@ -36,6 +36,8 @@ npx wrangler whoami
 
 The APAC database `procurecorp-db` is bound in `cloudflare/wrangler.toml` and its schema is applied. The deployed Worker is `https://procurecorp-api.rjimsbanzon.workers.dev`; it allows the GitHub Pages site and local Vite development origins.
 
+For an existing D1 database, apply account verification fields from the `cloudflare` directory with `npx wrangler d1 execute procurecorp-db --remote --file=./migrations/0001_user_registration.sql`.
+
 ### 2. Create the first cloud administrator
 
 Set a one-time bootstrap secret from the `cloudflare` directory:
@@ -73,6 +75,8 @@ The bootstrap endpoint works only while the D1 `users` table is empty. Cloud cre
 The Worker URL is set in `.env.development` and `.env.production`. Run `npm run dev` for local development or `npm run build` for GitHub Pages at `/Procurement-System/`.
 
 The Worker issues expiring bearer sessions and stores only token hashes in D1. Cloud passwords are salted and hashed with PBKDF2 at 100,000 iterations, the maximum supported by Cloudflare Workers Web Crypto. Protect the bootstrap secret; never commit secrets.
+
+On the cloud sign-in page, choose **Register Account** to request an Employee or Supplier account. New accounts remain pending until an administrator approves or rejects them in **User Verification**; pending and rejected accounts cannot sign in.
 
 ## API surface (Worker)
 

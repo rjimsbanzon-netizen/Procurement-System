@@ -9,12 +9,17 @@ export interface Env {
 }
 
 type Role = 'admin' | 'employee' | 'guest';
+type AccountStatus = 'pending' | 'approved' | 'rejected';
 type User = {
   id: string;
   username: string;
   name: string;
   email: string;
   role: Role;
+  app_role: string;
+  status: AccountStatus;
+  department: string;
+  company_name: string;
 };
 
 const PASSWORD_ITERATIONS = 100_000;
@@ -40,10 +45,6 @@ function corsHeaders(env: Env, origin: string | null): HeadersInit {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Vary': 'Origin',
   };
-}
-
-function isRole(value: unknown): value is Role {
-  return value === 'admin' || value === 'employee' || value === 'guest';
 }
 
 function isStatus(value: unknown): value is 'pending' | 'approved' | 'rejected' | 'completed' {
@@ -142,9 +143,10 @@ async function authenticate(request: Request, env: Env): Promise<User | null> {
   const token = request.headers.get('Authorization')?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
   if (!token) return null;
   const row = await env.DB.prepare(
-    `SELECT users.id, users.username, users.name, users.email, users.role
+    `SELECT users.id, users.username, users.name, users.email, users.role,
+            users.app_role, users.status, users.department, users.company_name
      FROM sessions JOIN users ON users.id = sessions.user_id
-     WHERE sessions.token_hash = ? AND sessions.expires_at > ?`
+     WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.status = 'approved'`
   )
     .bind(await digest(token), Math.floor(Date.now() / 1000))
     .first<User>();
@@ -193,18 +195,80 @@ export default {
         return json({ ok: true }, 200, cors);
       }
 
+      if (pathname === '/auth/register' && request.method === 'POST') {
+        const body = (await request.json()) as {
+          username?: unknown;
+          password?: unknown;
+          name?: unknown;
+          email?: unknown;
+          accountType?: unknown;
+          department?: unknown;
+          companyName?: unknown;
+        };
+        if (
+          !validAccount(body) ||
+          (body.accountType !== 'employee' && body.accountType !== 'supplier') ||
+          (body.department !== undefined && typeof body.department !== 'string') ||
+          (body.companyName !== undefined && typeof body.companyName !== 'string')
+        ) {
+          return json({ error: 'Provide valid account details and choose Employee or Supplier' }, 400, cors);
+        }
+        const accountType = body.accountType;
+        const appRole = accountType === 'supplier' ? 'Supplier' : 'Employee';
+        const role = accountType === 'supplier' ? 'guest' : 'employee';
+        const department = accountType === 'employee' ? (body.department as string | undefined)?.trim() ?? '' : '';
+        const companyName = accountType === 'supplier' ? (body.companyName as string | undefined)?.trim() ?? '' : '';
+        if (department.length > 120 || companyName.length > 160) {
+          return json({ error: 'Department or company name is too long' }, 400, cors);
+        }
+
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        try {
+          await env.DB.prepare(
+            `INSERT INTO users
+             (id, username, password_hash, name, email, role, app_role, status, department, company_name, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
+          )
+            .bind(
+              id,
+              body.username.trim().toLowerCase(),
+              await hashPassword(body.password),
+              body.name.trim(),
+              body.email.trim().toLowerCase(),
+              role,
+              appRole,
+              department,
+              companyName,
+              now,
+              now
+            )
+            .run();
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+            return json({ error: 'Username already exists' }, 409, cors);
+          }
+          throw error;
+        }
+        return json({ ok: true, status: 'pending' }, 201, cors);
+      }
+
       if (pathname === '/auth/login' && request.method === 'POST') {
         const body = (await request.json()) as { username?: unknown; password?: unknown };
         if (typeof body.username !== 'string' || typeof body.password !== 'string') {
           return json({ error: 'username and password required' }, 400, cors);
         }
         const row = await env.DB.prepare(
-          'SELECT id, username, password_hash, name, email, role FROM users WHERE username = ?'
+          `SELECT id, username, password_hash, name, email, role, app_role, status, department, company_name
+           FROM users WHERE username = ?`
         )
           .bind(body.username.trim().toLowerCase())
           .first<User & { password_hash: string }>();
         if (!row || !(await verifyPassword(body.password, row.password_hash))) {
           return json({ user: null }, 200, cors);
+        }
+        if (row.status !== 'approved') {
+          return json({ user: null, pending: row.status === 'pending' }, 200, cors);
         }
 
         const token = newSessionToken();
@@ -245,8 +309,9 @@ export default {
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         const result = await env.DB.prepare(
-          `INSERT INTO users (id, username, password_hash, name, email, role, created_at, updated_at)
-           SELECT ?, ?, ?, ?, ?, 'admin', ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`
+          `INSERT INTO users
+           (id, username, password_hash, name, email, role, app_role, status, department, company_name, created_at, updated_at)
+           SELECT ?, ?, ?, ?, ?, 'admin', 'Admin', 'approved', '', '', ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`
         )
           .bind(
             id,
@@ -267,62 +332,12 @@ export default {
       const user = await authenticate(request, env);
       if (!user) return json({ error: 'Authentication required' }, 401, cors);
 
-      if (pathname === '/auth/register' && request.method === 'POST') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
-        const body = (await request.json()) as {
-          username?: unknown;
-          password?: unknown;
-          name?: unknown;
-          email?: unknown;
-          role?: unknown;
-        };
-        if (!validAccount(body) || !isRole(body.role)) {
-          return json({ error: 'Invalid account details or role' }, 400, cors);
-        }
-        const id = crypto.randomUUID();
-        const now = new Date().toISOString();
-        try {
-          await env.DB.prepare(
-            `INSERT INTO users (id, username, password_hash, name, email, role, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-            .bind(
-              id,
-              body.username.trim().toLowerCase(),
-              await hashPassword(body.password),
-              body.name.trim(),
-              body.email.trim().toLowerCase(),
-              body.role,
-              now,
-              now
-            )
-            .run();
-        } catch (error) {
-          if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-            return json({ ok: false, error: 'Username already exists' }, 409, cors);
-          }
-          throw error;
-        }
-        return json(
-          {
-            ok: true,
-            user: {
-              id,
-              username: body.username.trim().toLowerCase(),
-              name: body.name.trim(),
-              email: body.email.trim().toLowerCase(),
-              role: body.role,
-            },
-          },
-          201,
-          cors
-        );
+      if (pathname === '/auth/me' && request.method === 'GET') {
+        return json({ user }, 200, cors);
       }
 
-      // Admin-only import/export for the separate enterprise workflow dataset.
-      // Never store its local demo user accounts or plaintext passwords in D1.
+      // The authenticated workspace uses role-specific views; credentials remain in the users table.
       if (pathname === '/enterprise-state' && (request.method === 'GET' || request.method === 'PUT')) {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
         if (request.method === 'GET') {
           const row = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1').first<{ data: string }>();
           return json({ data: row ? JSON.parse(row.data) : null }, 200, cors);
@@ -345,9 +360,40 @@ export default {
       if (pathname === '/users' && request.method === 'GET') {
         if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
         const { results } = await env.DB.prepare(
-          'SELECT id, username, name, email, role FROM users ORDER BY username'
+          `SELECT id, username, name, email, role, app_role, status, department, company_name
+           FROM users ORDER BY username`
         ).all();
         return json(results ?? [], 200, cors);
+      }
+
+      const userMatch = pathname.match(/^\/users\/([^/]+)$/);
+      if (userMatch && request.method === 'PUT') {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        const body = (await request.json()) as { status?: unknown; appRole?: unknown };
+        const allowedRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Supplier'];
+        if (
+          (body.status !== 'pending' && body.status !== 'approved' && body.status !== 'rejected') ||
+          (body.appRole !== undefined && (typeof body.appRole !== 'string' || !allowedRoles.includes(body.appRole)))
+        ) {
+          return json({ error: 'Invalid account status or role' }, 400, cors);
+        }
+        const id = decodeURIComponent(userMatch[1]);
+        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(id).first<{ role: Role }>();
+        if (!target || target.role === 'admin' || id === user.id) {
+          return json({ error: 'Account cannot be modified' }, 404, cors);
+        }
+        const appRole = body.appRole as string | undefined;
+        const role = appRole === 'Supplier' ? 'guest' : 'employee';
+        await env.DB.prepare(
+          `UPDATE users
+           SET status = ?, app_role = COALESCE(?, app_role),
+               role = CASE WHEN ? IS NULL THEN role ELSE ? END,
+               updated_at = ?
+           WHERE id = ?`
+        )
+          .bind(body.status, appRole ?? null, appRole ?? null, role, new Date().toISOString(), id)
+          .run();
+        return json({ ok: true, id, status: body.status, appRole }, 200, cors);
       }
 
       if (pathname === '/suppliers' && request.method === 'GET') {

@@ -740,23 +740,26 @@
             }, 3500);
         }
 
-        function mapCloudUser(user) {
-            if (!user || user.role !== 'admin') {
-                throw new Error('Only the Cloudflare administrator account can access this workspace.');
-            }
+        function mapCloudUser(user, suppliers = []) {
+            if (!user) throw new Error('Cloud account details are missing.');
+            const role = user.app_role || (user.role === 'admin' ? 'Admin' : user.role === 'guest' ? 'Supplier' : 'Employee');
+            const supplier = role === 'Supplier'
+                ? suppliers.find(item => item.name.toLowerCase() === (user.company_name || '').toLowerCase())
+                : null;
             return {
                 id: user.id,
                 username: user.username,
                 name: user.name,
                 email: user.email,
-                role: 'Admin',
-                department: 'Executive',
-                status: 'Active',
-                supplierId: null
+                role,
+                department: role === 'Admin' ? 'Executive' : role === 'Supplier' ? (user.company_name || 'External Vendor') : (user.department || 'Unassigned'),
+                companyName: user.company_name || '',
+                status: user.status === 'pending' ? 'Pending Verification' : user.status === 'rejected' ? 'Rejected' : 'Active',
+                supplierId: supplier?.id ?? null
             };
         }
 
-        function applyCloudState(data, user) {
+        function applyCloudState(data, user, users = [user]) {
             const state = Storage.empty();
             if (data !== null) {
                 if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -769,15 +772,14 @@
                     state[collection] = data[collection];
                 });
             }
-            state.users = [user];
+            state.users = users.map(account => mapCloudUser(account, state.suppliers));
             state.currentUser = user;
             DB = state;
         }
 
         async function restoreCloudSession() {
             const token = localStorage.getItem(CLOUD_TOKEN_KEY);
-            const username = localStorage.getItem(CLOUD_USERNAME_KEY);
-            if (!token || !username) {
+            if (!token) {
                 localStorage.removeItem(CLOUD_TOKEN_KEY);
                 localStorage.removeItem(CLOUD_USERNAME_KEY);
                 renderApp();
@@ -785,13 +787,14 @@
             }
 
             try {
-                const [users, snapshot] = await Promise.all([
-                    cloudRequest('/users'),
+                const [session, snapshot] = await Promise.all([
+                    cloudRequest('/auth/me'),
                     cloudRequest('/enterprise-state')
                 ]);
-                const account = users.find(user => user.username === username);
-                if (!account) throw new Error('The saved cloud administrator account is unavailable.');
-                applyCloudState(snapshot.data, mapCloudUser(account));
+                const account = session.user;
+                const user = mapCloudUser(account, snapshot.data?.suppliers || []);
+                const users = account.role === 'admin' ? await cloudRequest('/users') : [account];
+                applyCloudState(snapshot.data, user, users);
                 renderApp();
             } catch (error) {
                 localStorage.removeItem(CLOUD_TOKEN_KEY);
@@ -808,24 +811,39 @@
                 method: 'POST',
                 body: JSON.stringify({ username, password })
             }, null);
-            if (!response.user || !response.token) {
-                throw new Error('Invalid administrator username or password.');
+            if (response.pending) {
+                throw new Error('Your registration is awaiting administrator verification.');
             }
-            const user = mapCloudUser(response.user);
-            localStorage.setItem(CLOUD_TOKEN_KEY, response.token);
-            localStorage.setItem(CLOUD_USERNAME_KEY, user.username);
+            if (!response.user || !response.token) {
+                throw new Error('Invalid username or password.');
+            }
 
             try {
                 const snapshot = await cloudRequest('/enterprise-state');
-                applyCloudState(snapshot.data, user);
+                const user = mapCloudUser(response.user, snapshot.data?.suppliers || []);
+                const users = user.role === 'Admin' ? await cloudRequest('/users') : [response.user];
+                localStorage.setItem(CLOUD_TOKEN_KEY, response.token);
+                localStorage.setItem(CLOUD_USERNAME_KEY, user.username);
+                applyCloudState(snapshot.data, user, users);
             } catch (error) {
                 localStorage.removeItem(CLOUD_TOKEN_KEY);
                 localStorage.removeItem(CLOUD_USERNAME_KEY);
                 throw error;
             }
 
+            const user = DB.currentUser;
             logAudit('User Login', `User ${user.name} signed in successfully.`);
             showToast(`Welcome back, ${user.name}!`, 'success');
+            renderApp();
+        }
+
+        async function registerCloudAccount(account) {
+            await cloudRequest('/auth/register', {
+                method: 'POST',
+                body: JSON.stringify(account)
+            }, null);
+            showToast('Registration submitted. An administrator must verify your account before you can sign in.', 'success');
+            window.authMode = 'login';
             renderApp();
         }
 
@@ -921,7 +939,7 @@
 
         // 1. SIGN-UP & SIGN-IN WITH EXTERNAL SUPPLIER SUPPORT
         function renderAuthScreen() {
-            const isSignup = !CLOUD_API_BASE && window.authMode === 'signup';
+            const isSignup = window.authMode === 'signup';
             return `
                 <div class="enterprise-auth min-h-screen flex items-center justify-center p-4">
                     <div class="enterprise-auth-card max-w-md w-full rounded-2xl shadow-2xl p-8 border border-slate-200">
@@ -969,6 +987,12 @@
                                     <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">New Supplier Company Name</label>
                                     <input type="text" id="auth-new-supplier-name" placeholder="e.g. Acme Tech Solutions" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm">
                                 </div>
+                                ${CLOUD_API_BASE ? `
+                                    <div id="cloud-supplier-company-container" class="hidden">
+                                        <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Supplier Company Name</label>
+                                        <input type="text" id="auth-supplier-company" placeholder="e.g. Acme Tech Solutions" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm">
+                                    </div>
+                                ` : ''}
                             ` : ''}
 
                             <div>
@@ -995,9 +1019,7 @@
                         </form>
 
                         <div class="mt-6 text-center text-xs text-slate-500 border-t border-slate-100 pt-4">
-                            ${CLOUD_API_BASE ? `
-                                Cloud accounts are managed by the system administrator.
-                            ` : isSignup ? `
+                            ${isSignup ? `
                                 Already registered? <a href="#" id="toggle-auth" class="text-sky-600 font-semibold hover:underline">Sign In Here</a>
                             ` : `
                                 Need an internal or supplier account? <a href="#" id="toggle-auth" class="text-sky-600 font-semibold hover:underline">Register Account</a>
@@ -1024,14 +1046,21 @@
                     const type = e.target.value;
                     const deptContainer = document.getElementById('dept-field-container');
                     const supplierSelectContainer = document.getElementById('supplier-select-container');
+                    const companyContainer = document.getElementById('cloud-supplier-company-container');
                     
                     if (type === 'Supplier') {
                         deptContainer.classList.add('hidden');
-                        supplierSelectContainer.classList.remove('hidden');
+                        if (CLOUD_API_BASE) {
+                            supplierSelectContainer.classList.add('hidden');
+                            companyContainer?.classList.remove('hidden');
+                        } else {
+                            supplierSelectContainer.classList.remove('hidden');
+                        }
                     } else {
                         deptContainer.classList.remove('hidden');
                         supplierSelectContainer.classList.add('hidden');
-                        document.getElementById('new-supplier-name-container').classList.add('hidden');
+                        document.getElementById('new-supplier-name-container')?.classList.add('hidden');
+                        companyContainer?.classList.add('hidden');
                     }
                 });
             }
@@ -1054,6 +1083,23 @@
                     e.preventDefault();
                     const username = document.getElementById('auth-username').value.trim();
                     const password = document.getElementById('auth-password').value;
+
+                    if (CLOUD_API_BASE && window.authMode === 'signup') {
+                        try {
+                            await registerCloudAccount({
+                                username,
+                                password,
+                                name: document.getElementById('auth-name').value.trim(),
+                                email: document.getElementById('auth-email').value.trim(),
+                                accountType: document.getElementById('auth-account-type').value === 'Supplier' ? 'supplier' : 'employee',
+                                department: document.getElementById('auth-dept').value,
+                                companyName: document.getElementById('auth-supplier-company')?.value.trim() || ''
+                            });
+                        } catch (error) {
+                            showToast(error instanceof Error ? error.message : 'Cloud registration failed.', 'error');
+                        }
+                        return;
+                    }
 
                     if (CLOUD_API_BASE) {
                         try {
@@ -1190,10 +1236,8 @@
 
                 if (DB.currentUser.role === 'Admin') {
                     navItems.push({ id: 'audit', label: 'Audit Logs', icon: 'fa-clock-rotate-left' });
-                    if (!CLOUD_API_BASE) {
-                        navItems.push({ id: 'users', label: 'User Verification', icon: 'fa-users-gear' });
-                        navItems.push({ id: 'access_control', label: 'Access Control Matrix', icon: 'fa-shield-halved' });
-                    }
+                    navItems.push({ id: 'users', label: 'User Verification', icon: 'fa-users-gear' });
+                    if (!CLOUD_API_BASE) navItems.push({ id: 'access_control', label: 'Access Control Matrix', icon: 'fa-shield-halved' });
                 }
             }
 
@@ -1240,7 +1284,7 @@
 
         // MAIN CONTENT ROUTER
         function renderMainContent() {
-            if (CLOUD_API_BASE && ['users', 'access_control'].includes(currentTab)) {
+            if (CLOUD_API_BASE && currentTab === 'access_control') {
                 return renderDashboardView();
             }
             switch(currentTab) {
@@ -1264,7 +1308,7 @@
         // ==========================================
         function renderDashboardView() {
             if (DB.currentUser.role === 'Supplier') {
-                const mySupplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId) || { name: 'External Supplier' };
+                const mySupplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId) || { name: DB.currentUser.companyName || 'External Supplier' };
                 const myOrders = DB.orders.filter(o => o.supplierId === DB.currentUser.supplierId);
                 const ratingStats = getSupplierRatingStats(DB.currentUser.supplierId);
                 const myMeetings = DB.proposalMeetings.filter(m => m.supplierId === DB.currentUser.supplierId && m.status === 'Pending Response');
@@ -2317,7 +2361,10 @@
                 <div class="space-y-4">
                     <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                         <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                            <h3 class="font-bold text-slate-800">User Account & Authorization Management</h3>
+                            <div>
+                                <h3 class="font-bold text-slate-800">User Account & Authorization Management</h3>
+                                <p class="text-xs text-slate-500 mt-1">Review registrations and approve or reject access requests.</p>
+                            </div>
                         </div>
 
                         <div class="overflow-x-auto">
@@ -2337,28 +2384,30 @@
                                             <td class="p-4 font-bold text-slate-900">${u.name} <span class="text-xs text-slate-400">(@${u.username})</span></td>
                                             <td class="p-4 text-xs">
                                                 <div>${u.email}</div>
-                                                <div class="text-slate-400">${u.department}</div>
+                                                <div class="text-slate-400">${u.companyName || u.department}</div>
                                             </td>
                                             <td class="p-4">
-                                                <select onchange="updateUserRole('${u.id}', this.value)" class="text-xs border border-slate-300 rounded px-2 py-1 focus:ring-2 focus:ring-sky-500">
-                                                    <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
-                                                    <option value="Procurement Officer" ${u.role === 'Procurement Officer' ? 'selected' : ''}>Procurement Officer</option>
-                                                    <option value="Procurement Head" ${u.role === 'Procurement Head' ? 'selected' : ''}>Procurement Head</option>
-                                                    <option value="Admin" ${u.role === 'Admin' ? 'selected' : ''}>Admin</option>
-                                                    <option value="Supplier" ${u.role === 'Supplier' ? 'selected' : ''}>Supplier</option>
-                                                </select>
+                                                ${u.role === 'Admin' ? `<span class="text-xs font-semibold text-slate-700">Administrator</span>` : `
+                                                    <select onchange="updateUserRole('${u.id}', this.value)" class="text-xs border border-slate-300 rounded px-2 py-1 focus:ring-2 focus:ring-sky-500">
+                                                        <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
+                                                        <option value="Procurement Officer" ${u.role === 'Procurement Officer' ? 'selected' : ''}>Procurement Officer</option>
+                                                        <option value="Procurement Head" ${u.role === 'Procurement Head' ? 'selected' : ''}>Procurement Head</option>
+                                                        <option value="Supplier" ${u.role === 'Supplier' ? 'selected' : ''}>Supplier</option>
+                                                    </select>
+                                                `}
                                             </td>
                                             <td class="p-4">
                                                 <span class="px-2.5 py-1 rounded-full text-xs font-semibold ${
-                                                    u.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                                    u.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : u.status === 'Rejected' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
                                                 }">${u.status}</span>
                                             </td>
                                             <td class="p-4 text-center">
                                                 ${u.status === 'Pending Verification' ? `
-                                                    <button onclick="approveUser('${u.id}')" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow-sm transition-colors">
-                                                        Authorize Account
-                                                    </button>
-                                                ` : `<span class="text-xs text-slate-400">Active</span>`}
+                                                    <div class="flex justify-center gap-2">
+                                                        <button onclick="approveUser('${u.id}')" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold shadow-sm transition-colors">Approve</button>
+                                                        <button onclick="rejectUser('${u.id}')" class="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold shadow-sm transition-colors">Reject</button>
+                                                    </div>
+                                                ` : `<span class="text-xs text-slate-400">${u.status === 'Rejected' ? 'Access denied' : 'Approved'}</span>`}
                                             </td>
                                         </tr>
                                     `).join('')}
@@ -3265,20 +3314,67 @@
             return true;
         }
 
-        function approveUser(userId) {
+        async function approveUser(userId) {
             const u = DB.users.find(usr => usr.id === userId);
             if (u) {
+                if (CLOUD_API_BASE) {
+                    try {
+                        await cloudRequest(`/users/${encodeURIComponent(u.id)}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({ status: 'approved', appRole: u.role })
+                        });
+                    } catch (error) {
+                        showToast(error instanceof Error ? error.message : 'Account approval failed.', 'error');
+                        return;
+                    }
+                }
                 u.status = 'Active';
                 logAudit('User Authorized', `User ${u.name} (@${u.username}) approved by Administrator.`);
                 Storage.save(DB);
-                showToast(`User account authorized successfully.`, 'success');
+                showToast('User account approved successfully.', 'success');
                 renderApp();
             }
         }
 
-        function updateUserRole(userId, newRole) {
+        async function rejectUser(userId) {
+            const u = DB.users.find(usr => usr.id === userId);
+            if (!u) return;
+            if (CLOUD_API_BASE) {
+                try {
+                    await cloudRequest(`/users/${encodeURIComponent(u.id)}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ status: 'rejected', appRole: u.role })
+                    });
+                } catch (error) {
+                    showToast(error instanceof Error ? error.message : 'Account rejection failed.', 'error');
+                    return;
+                }
+            }
+            u.status = 'Rejected';
+            logAudit('User Registration Rejected', `Administrator rejected ${u.name} (@${u.username}).`);
+            Storage.save(DB);
+            showToast('User registration rejected.', 'warning');
+            renderApp();
+        }
+
+        async function updateUserRole(userId, newRole) {
             const u = DB.users.find(usr => usr.id === userId);
             if (u) {
+                if (CLOUD_API_BASE) {
+                    try {
+                        await cloudRequest(`/users/${encodeURIComponent(u.id)}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                status: u.status === 'Pending Verification' ? 'pending' : u.status === 'Rejected' ? 'rejected' : 'approved',
+                                appRole: newRole
+                            })
+                        });
+                    } catch (error) {
+                        showToast(error instanceof Error ? error.message : 'User role update failed.', 'error');
+                        renderApp();
+                        return;
+                    }
+                }
                 u.role = newRole;
                 logAudit('User Role Updated', `User ${u.name} role changed to ${newRole}.`);
                 Storage.save(DB);
