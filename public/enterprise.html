@@ -84,18 +84,14 @@
             border-color: var(--copper);
             box-shadow: 0 0 0 3px rgba(166, 79, 50, .12);
         }
-        .auth-monogram {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 48px;
-            height: 48px;
-            margin-bottom: 12px;
-            background: var(--copper);
-            color: white;
-            font-size: 17px;
-            font-weight: 700;
-            letter-spacing: -.08em;
+
+        .auth-monogram img {
+            display: block;
+            width: 5rem;
+            height: 5rem;
+            object-fit: contain;
+            margin: 0 auto 0.5rem;
+            border-radius: 25%;
         }
         .enterprise-shell { background: var(--paper); }
         .enterprise-shell .enterprise-sidebar {
@@ -107,8 +103,9 @@
             border-color: #3a433b;
         }
         .enterprise-sidebar .sidebar-mark {
-            background: var(--copper);
-            border-radius: 3px;
+            padding: 0;
+            background: transparent;
+            border-radius: 0;
             box-shadow: none;
         }
         .enterprise-sidebar nav {
@@ -1087,7 +1084,9 @@
                 <div class="enterprise-auth min-h-screen flex items-center justify-center p-4">
                     <div class="enterprise-auth-card max-w-md w-full rounded-2xl shadow-2xl p-8 border border-slate-200">
                         <div class="text-center mb-6">
-                            <div class="auth-monogram">PF</div>
+                            <div class="auth-monogram">
+                                <img src="./procureflow-mark.png" alt="ProcureFlow Mark" class="w-16 h-16 mx-auto">
+                            </div>
                             <h2 class="text-2xl font-bold text-slate-900">${isSignup ? 'Create Account' : 'Procurement Portal'}</h2>
                             <p class="text-xs text-slate-500 mt-1">Enterprise Resource Planning & Vendor Network</p>
                         </div>
@@ -1391,8 +1390,8 @@
                 <aside class="enterprise-sidebar w-64 h-full min-h-0 bg-slate-900 text-slate-300 flex flex-col justify-between shrink-0 overflow-hidden shadow-xl">
                     <div class="flex min-h-0 flex-1 flex-col">
                         <div class="sidebar-brand p-5 flex items-center space-x-3 border-b border-slate-800">
-                            <div class="sidebar-mark p-2 bg-sky-600 text-white rounded-lg">
-                                <span class="font-bold tracking-tight">PF</span>
+                            <div class="sidebar-mark">
+                                <img src="./procureflow-mark.png" alt="ProcureFlow" class="w-10 h-10 object-contain rounded-md">
                             </div>
                             <div class="sidebar-brand-copy">
                                 <div class="font-bold text-white text-base leading-tight">ProcureFlow</div>
@@ -1457,6 +1456,17 @@
         // ==========================================
         // DASHBOARD VIEW
         // ==========================================
+        function getCurrentUserRequisitions() {
+            const username = DB.currentUser.username;
+            const name = DB.currentUser.name;
+
+            return DB.requisitions.filter(request =>
+                username
+                    ? request.requestedByUsername === username
+                    : !request.requestedByUsername && request.requestedBy === name
+            );
+        }
+
         function renderDashboardView() {
             if (DB.currentUser.role === 'Supplier') {
                 const mySupplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId) || { name: DB.currentUser.companyName || 'External Supplier' };
@@ -1533,6 +1543,96 @@
                                 <div class="w-10 h-10 rounded-lg bg-sky-100 text-sky-600 flex items-center justify-center text-lg">
                                     <i class="fa-solid fa-sack-dollar"></i>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (DB.currentUser.role === 'Employee') {
+                const myRequisitions = getCurrentUserRequisitions();
+                const pendingRequisitions = myRequisitions.filter(request => request.status === 'Pending').length;
+                const approvedRequisitions = myRequisitions.filter(request => request.status === 'Approved').length;
+                const inProcessRequisitions = myRequisitions.filter(request => request.status === 'In Process').length;
+                const completedRequisitions = myRequisitions.filter(request => request.status === 'Completed').length;
+                const rejectedRequisitions = myRequisitions.filter(request => request.status === 'Rejected').length;
+                const recentRequisitions = [...myRequisitions]
+                    .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')))
+                    .slice(0, 5);
+
+                return `
+                    <div class="enterprise-dashboard space-y-6">
+                        <div class="dashboard-hero bg-gradient-to-r from-slate-900 to-sky-900 rounded-2xl p-6 text-white shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center">
+                            <div>
+                                <h2 class="text-2xl font-bold">My Purchase Requests</h2>
+                                <p class="text-sky-200 text-sm mt-1">Track the status of requests you submitted.</p>
+                            </div>
+                            ${hasPermission('create_pr') ? `
+                                <button id="quick-create-pr-btn" class="mt-4 md:mt-0 px-4 py-2.5 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-sm font-semibold shadow-md transition-all flex items-center space-x-2">
+                                    <i class="fa-solid fa-plus"></i>
+                                    <span>New Requisition</span>
+                                </button>
+                            ` : ''}
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                            ${[
+                                { label: 'My Requests', count: myRequisitions.length, icon: 'fa-file-signature', color: 'sky' },
+                                { label: 'Pending Review', count: pendingRequisitions, icon: 'fa-clock', color: 'amber' },
+                                { label: 'Approved', count: approvedRequisitions, icon: 'fa-thumbs-up', color: 'indigo' },
+                                { label: 'In Process', count: inProcessRequisitions, icon: 'fa-spinner', color: 'blue' },
+                                { label: 'Completed', count: completedRequisitions, icon: 'fa-circle-check', color: 'emerald' },
+                                { label: 'Rejected', count: rejectedRequisitions, icon: 'fa-circle-xmark', color: 'rose' }
+                            ].map(metric => `
+                                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                                    <div>
+                                        <p class="text-xs font-semibold uppercase text-slate-500">${metric.label}</p>
+                                        <p class="text-2xl font-bold text-${metric.color}-600 mt-1">${metric.count}</p>
+                                    </div>
+                                    <div class="w-10 h-10 rounded-lg bg-${metric.color}-100 text-${metric.color}-600 flex items-center justify-center text-lg">
+                                        <i class="fa-solid ${metric.icon}"></i>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+                                <div>
+                                    <h3 class="font-bold text-slate-800">My Recent Requests</h3>
+                                    <p class="text-xs text-slate-500">Only requests submitted by your account are shown.</p>
+                                </div>
+                                <button onclick="currentTab='requisitions'; renderApp();" class="text-sm font-semibold text-sky-700 hover:text-sky-900">
+                                    View all
+                                </button>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left text-sm text-slate-600">
+                                    <thead class="bg-slate-50 text-slate-700 uppercase font-semibold text-xs border-b border-slate-200">
+                                        <tr>
+                                            <th class="p-4">Request</th>
+                                            <th class="p-4">Item</th>
+                                            <th class="p-4">Quantity</th>
+                                            <th class="p-4">Needed by</th>
+                                            <th class="p-4 text-right">Estimated Cost</th>
+                                            <th class="p-4">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-200">
+                                        ${recentRequisitions.length === 0 ? `
+                                            <tr><td colspan="6" class="p-8 text-center text-slate-400">You have not submitted any purchase requests yet.</td></tr>
+                                        ` : recentRequisitions.map(request => `
+                                            <tr class="hover:bg-slate-50/80">
+                                                <td class="p-4 font-bold text-sky-600">${request.id}</td>
+                                                <td class="p-4 font-medium text-slate-900">${request.itemTitle}</td>
+                                                <td class="p-4">${request.quantity}</td>
+                                                <td class="p-4">${request.targetDate || '—'}</td>
+                                                <td class="p-4 text-right font-semibold text-slate-900">₱${(request.totalCost || 0).toLocaleString()}</td>
+                                                <td class="p-4">${renderPRStatusBadge(request.status)}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -1886,7 +1986,7 @@
         function renderRequisitionsView() {
             let reqs = DB.requisitions;
             if (DB.currentUser.role === 'Employee') {
-                reqs = reqs.filter(r => r.requestedByUsername === DB.currentUser.username || r.department === DB.currentUser.department);
+                reqs = getCurrentUserRequisitions();
             }
 
             return `
