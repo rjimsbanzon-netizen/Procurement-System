@@ -819,9 +819,11 @@
             }
 
             try {
-                const snapshot = await cloudRequest('/enterprise-state');
+                const snapshot = await cloudRequest('/enterprise-state', {}, response.token);
                 const user = mapCloudUser(response.user, snapshot.data?.suppliers || []);
-                const users = user.role === 'Admin' ? await cloudRequest('/users') : [response.user];
+                const users = user.role === 'Admin'
+                    ? await cloudRequest('/users', {}, response.token)
+                    : [response.user];
                 localStorage.setItem(CLOUD_TOKEN_KEY, response.token);
                 localStorage.setItem(CLOUD_USERNAME_KEY, user.username);
                 applyCloudState(snapshot.data, user, users);
