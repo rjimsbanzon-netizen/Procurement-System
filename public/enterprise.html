@@ -951,6 +951,42 @@
             return ['Admin', 'Procurement Head'].includes(DB.currentUser?.role) && hasPermission('manage_bidding');
         }
 
+        function getAgreementFinalizationError(bidId) {
+            if (!canManageBidding()) return 'Only the Procurement Head or Admin can finalize supplier agreements.';
+
+            const bid = DB.bids.find(item => item.id === bidId);
+            if (!bid) return 'The selected supplier bid could not be found.';
+
+            const need = DB.stockNeeds.find(item => item.id === bid.needId);
+            if (!need) return 'The procurement need linked to this bid could not be found.';
+
+            const pr = DB.requisitions.find(item => item.id === need.prId);
+            if (!pr) return 'The approved Purchase Requisition linked to this need could not be found.';
+
+            if (DB.orders.some(order => order.bidId === bid.id)) {
+                return `A Purchase Order has already been issued for bid ${bid.id}.`;
+            }
+            if (pr.status !== 'Approved') {
+                return `Purchase Requisition ${pr.id} is "${pr.status}". It must be Approved before a Purchase Order can be issued.`;
+            }
+            if (need.selectedBidId !== bid.id) {
+                return 'This bid is not the supplier currently selected for the procurement need.';
+            }
+            if (need.status !== 'Supplier Selected') {
+                return `The procurement need is "${need.status}". It must be in Supplier Selected status before finalizing.`;
+            }
+            if (bid.status !== 'Selected') {
+                return `The bid is "${bid.status}". Select this supplier before finalizing the agreement.`;
+            }
+
+            const meeting = DB.proposalMeetings.find(item => item.bidId === bid.id);
+            if (meeting?.status !== 'Agreed') {
+                return 'The selected supplier must agree to the proposal meeting before the agreement can be finalized.';
+            }
+
+            return null;
+        }
+
         function canManageDeliveryIssues() {
             return ['Admin', 'Procurement Head'].includes(DB.currentUser?.role) &&
                 hasPermission('manage_delivery_issues');
@@ -1720,6 +1756,7 @@
                                         ` : DB.bids.map(b => {
                                             const need = DB.stockNeeds.find(s => s.id === b.needId) || { title: b.needId };
                                             const meeting = DB.proposalMeetings.find(m => m.bidId === b.id);
+                                            const finalizeError = getAgreementFinalizationError(b.id);
                                             return `
                                                 <tr class="hover:bg-slate-50">
                                                     <td class="p-4 font-bold text-sky-600">${need.title}</td>
@@ -1732,7 +1769,11 @@
                                                         ${b.status === 'Selected' ? `
                                                             <span class="block px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Selected supplier</span>
                                                             ${meeting?.status === 'Agreed' ? `
-                                                                ${canCreateNeed ? `<button onclick="openFinalizeAgreementModal('${b.id}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold">Finalize Terms & Issue PO</button>` : ''}
+                                                                ${canCreateNeed && !finalizeError
+                                                                    ? `<button onclick="openFinalizeAgreementModal('${b.id}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold">Finalize Terms & Issue PO</button>`
+                                                                    : canCreateNeed
+                                                                        ? `<span class="block max-w-xs text-xs text-rose-700">Cannot issue PO: ${finalizeError}</span>`
+                                                                        : ''}
                                                             ` : meeting?.status === 'Pending Response' ? `
                                                                 <span class="text-xs text-amber-700">Meeting response pending</span>
                                                             ` : canCreateNeed ? `
@@ -3343,12 +3384,9 @@
         }
 
         function openFinalizeAgreementModal(bidId) {
-            const bid = DB.bids.find(item => item.id === bidId);
-            const need = DB.stockNeeds.find(item => item.id === bid?.needId);
-            const meeting = DB.proposalMeetings.find(item => item.bidId === bidId);
-            if (!canManageBidding() || !bid || !need || need.selectedBidId !== bid.id ||
-                bid.status !== 'Selected' || meeting?.status !== 'Agreed') {
-                showToast('Finalize the agreement only after the selected supplier accepts the meeting schedule.', 'error');
+            const blockReason = getAgreementFinalizationError(bidId);
+            if (blockReason) {
+                showToast(blockReason, 'error');
                 return;
             }
             selectedRecord = bidId;
@@ -4103,18 +4141,30 @@
                     const bid = DB.bids.find(item => item.id === selectedRecord);
                     const need = DB.stockNeeds.find(item => item.id === bid?.needId);
                     const pr = DB.requisitions.find(item => item.id === need?.prId);
-                    const meeting = DB.proposalMeetings.find(item => item.bidId === bid?.id);
                     const unitPrice = Number(document.getElementById('agreement-unit-price').value);
                     const quantity = Number(document.getElementById('agreement-quantity').value);
                     const specs = document.getElementById('agreement-specs').value.trim();
                     const terms = document.getElementById('agreement-terms').value.trim();
 
-                    if (!canManageBidding() || !bid || !need || !pr || pr.status !== 'Approved' ||
-                        need.selectedBidId !== bid.id || need.status !== 'Supplier Selected' ||
-                        bid.status !== 'Selected' || meeting?.status !== 'Agreed' ||
-                        !Number.isFinite(unitPrice) || unitPrice < 0 ||
-                        !Number.isInteger(quantity) || quantity < 1 || !specs || !terms) {
-                        showToast('The agreement could not be finalized. Verify the selected supplier, meeting, and terms.', 'error');
+                    const blockReason = getAgreementFinalizationError(selectedRecord);
+                    if (blockReason) {
+                        showToast(blockReason, 'error');
+                        return;
+                    }
+                    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+                        showToast('Enter a valid agreed unit price in Philippine pesos.', 'error');
+                        return;
+                    }
+                    if (!Number.isInteger(quantity) || quantity < 1) {
+                        showToast('Enter an agreed quantity as a whole number greater than zero.', 'error');
+                        return;
+                    }
+                    if (!specs) {
+                        showToast('Enter the final specifications and requirements before issuing the Purchase Order.', 'error');
+                        return;
+                    }
+                    if (!terms) {
+                        showToast('Enter the agreed terms before issuing the Purchase Order.', 'error');
                         return;
                     }
 
