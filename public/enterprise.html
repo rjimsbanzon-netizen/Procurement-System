@@ -112,12 +112,28 @@
             box-shadow: none;
         }
         .enterprise-sidebar nav {
+            display: flex;
+            flex-direction: column;
+            gap: .25rem;
             scrollbar-color: #657066 #252d28;
         }
         .enterprise-sidebar nav button {
             min-height: 44px;
+            height: auto;
             border-radius: 3px;
+            justify-content: flex-start;
+            text-align: left;
+            white-space: normal;
+            line-height: 1.35;
             transition: background-color .16s ease, color .16s ease, transform .16s ease;
+        }
+        .enterprise-sidebar nav button > i {
+            flex: 0 0 1.25rem;
+        }
+        .enterprise-sidebar .sidebar-nav-label {
+            flex: 1 1 0%;
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
         .enterprise-sidebar nav button[class~="bg-sky-600"] {
             background: var(--copper);
@@ -1272,7 +1288,7 @@
                             </div>
                         </div>
 
-                        <nav class="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-3 space-y-1">
+                        <nav class="min-h-0 flex-1 overflow-y-auto custom-scrollbar p-3">
                             ${navItems.map(item => `
                                 <button data-tab="${item.id}" class="nav-link w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all ${
                                     currentTab === item.id 
