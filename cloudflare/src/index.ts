@@ -259,7 +259,42 @@ export default {
             .run();
         } catch (error) {
           if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-            return json({ error: 'Username already exists' }, 409, cors);
+            const existing = await env.DB.prepare(
+              `SELECT id, email, password_hash
+               FROM users
+               WHERE username = ? AND role != 'admin'
+                 AND status = 'rejected' AND access_revoked = 0`
+            )
+              .bind(body.username.trim().toLowerCase())
+              .first<{ id: string; email: string; password_hash: string }>();
+            if (
+              !existing ||
+              existing.email.toLowerCase() !== body.email.trim().toLowerCase() ||
+              !(await verifyPassword(body.password, existing.password_hash))
+            ) {
+              return json({ error: 'Username already exists. For a rejected account, use the same email and password used for the original registration.' }, 409, cors);
+            }
+
+            const updated = await env.DB.prepare(
+              `UPDATE users
+               SET name = ?, app_role = ?, role = ?, status = 'pending',
+                   department = ?, company_name = ?, updated_at = ?
+               WHERE id = ? AND status = 'rejected' AND access_revoked = 0`
+            )
+              .bind(
+                body.name.trim(),
+                appRole,
+                role,
+                department,
+                companyName,
+                now,
+                existing.id
+              )
+              .run();
+            if (updated.meta.changes !== 1) {
+              return json({ error: 'This account could not be resubmitted. Please try again or contact an administrator.' }, 409, cors);
+            }
+            return json({ ok: true, status: 'pending', reapplied: true }, 200, cors);
           }
           throw error;
         }
@@ -281,7 +316,12 @@ export default {
           return json({ user: null }, 200, cors);
         }
         if (row.status !== 'approved' || row.access_revoked) {
-          return json({ user: null, pending: row.status === 'pending', accessRevoked: Boolean(row.access_revoked) }, 200, cors);
+          return json({
+            user: null,
+            pending: row.status === 'pending',
+            rejected: row.status === 'rejected',
+            accessRevoked: Boolean(row.access_revoked)
+          }, 200, cors);
         }
 
         const token = newSessionToken();

@@ -78,7 +78,7 @@ The Worker URL is set in `.env.development` and `.env.production`. Run `npm run 
 
 The Worker issues expiring bearer sessions and stores only token hashes in D1. Cloud passwords are salted and hashed with PBKDF2 at 100,000 iterations, the maximum supported by Cloudflare Workers Web Crypto. Protect the bootstrap secret; never commit secrets.
 
-On the cloud sign-in page, choose **Register Account** to request an Employee or Supplier account. New accounts remain pending until an administrator approves or rejects them in **User Verification**; pending and rejected accounts cannot sign in.
+On the cloud sign-in page, choose **Register Account** to request an Employee or Supplier account. New accounts remain pending until an administrator approves or rejects them in **User Verification**; pending and rejected accounts cannot sign in. If an account was rejected by mistake, its owner can resubmit using the same username, email, and original password; the request returns to pending for Admin review.
 
 ## API surface (Worker)
 

@@ -815,6 +815,9 @@
             if (response.pending) {
                 throw new Error('Your registration is awaiting administrator verification.');
             }
+            if (response.rejected) {
+                throw new Error('This account was rejected. Choose Register Account and resubmit using the same username, email, and password.');
+            }
             if (response.accessRevoked) {
                 throw new Error('Access to this account has been revoked. Contact an administrator.');
             }
@@ -844,11 +847,16 @@
         }
 
         async function registerCloudAccount(account) {
-            await cloudRequest('/auth/register', {
+            const response = await cloudRequest('/auth/register', {
                 method: 'POST',
                 body: JSON.stringify(account)
             }, null);
-            showToast('Registration submitted. An administrator must verify your account before you can sign in.', 'success');
+            showToast(
+                response.reapplied
+                    ? 'Your registration has been resubmitted for administrator review.'
+                    : 'Registration submitted. An administrator must verify your account before you can sign in.',
+                'success'
+            );
             window.authMode = 'login';
             renderApp();
         }
@@ -1015,7 +1023,7 @@
                             ${isSignup ? `
                                 <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
                                     <i class="fa-solid fa-shield-halved mr-1"></i>
-                                    New user accounts require Administrator verification before full portal authorization.
+                                    New user accounts require Administrator verification. If your request was rejected by mistake, resubmit with the same username, email, and password.
                                 </div>
                             ` : ''}
 
