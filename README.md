@@ -15,8 +15,9 @@ npm run dev
 ```
 
 Build for Cloudflare Pages using `npm run build` with output folder **dist**.
-Vite's output is the static UI. Your **existing Cloudflare Worker/D1 API must be
-running separately**; this package does not include a database server.
+Vite's output is the static UI. Your **existing Cloudflare Worker/D1 API must be running separately**; this
+package does not include a database server. Set `VITE_API_BASE_URL` to the
+Worker's base URL (for example, `https://procurecorp-api.YOUR_ACCOUNT.workers.dev`).
 
 ## Layout
 
