@@ -388,7 +388,7 @@
         const CLOUD_USERNAME_KEY = 'procurement_enterprise_username';
         const CLOUD_RECORD_COLLECTIONS = [
             'stockNeeds', 'bids', 'proposalMeetings', 'requisitions', 'orders',
-            'deliveries', 'amendments', 'payments', 'suppliers', 'ratings', 'auditLogs', 'accessControl'
+            'deliveries', 'amendments', 'payments', 'suppliers', 'ratings', 'auditLogs'
         ];
         let cloudSaveQueue = Promise.resolve();
         let cloudSaveError = null;
@@ -776,7 +776,7 @@
             };
         }
 
-        function applyCloudState(data, user, users = [user]) {
+        function applyCloudState(data, user, users = [user], accessControl = null) {
             const state = Storage.empty();
             if (data !== null) {
                 if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -787,6 +787,14 @@
                         throw new Error(`Cloud business data is missing ${collection}.`);
                     }
                     state[collection] = data[collection];
+                });
+            }
+            if (accessControl?.permissions && typeof accessControl.permissions === 'object') {
+                Object.keys(state.permissions).forEach(role => {
+                    const permissions = accessControl.permissions[role];
+                    if (Array.isArray(permissions)) {
+                        state.permissions[role] = permissions.filter(permission => typeof permission === 'string');
+                    }
                 });
             }
             state.users = users.map(account => mapCloudUser(account, state.suppliers));
@@ -804,14 +812,15 @@
             }
 
             try {
-                const [session, snapshot] = await Promise.all([
+                const [session, snapshot, accessControl] = await Promise.all([
                     cloudRequest('/auth/me'),
-                    cloudRequest('/enterprise-state')
+                    cloudRequest('/enterprise-state'),
+                    cloudRequest('/access-control')
                 ]);
                 const account = session.user;
                 const user = mapCloudUser(account, snapshot.data?.suppliers || []);
                 const users = account.role === 'admin' ? await cloudRequest('/users') : [account];
-                applyCloudState(snapshot.data, user, users);
+                applyCloudState(snapshot.data, user, users, accessControl);
                 renderApp();
             } catch (error) {
                 localStorage.removeItem(CLOUD_TOKEN_KEY);
@@ -842,14 +851,17 @@
             }
 
             try {
-                const snapshot = await cloudRequest('/enterprise-state', {}, response.token);
+                const [snapshot, accessControl] = await Promise.all([
+                    cloudRequest('/enterprise-state', {}, response.token),
+                    cloudRequest('/access-control', {}, response.token)
+                ]);
                 const user = mapCloudUser(response.user, snapshot.data?.suppliers || []);
                 const users = user.role === 'Admin'
                     ? await cloudRequest('/users', {}, response.token)
                     : [response.user];
                 localStorage.setItem(CLOUD_TOKEN_KEY, response.token);
                 localStorage.setItem(CLOUD_USERNAME_KEY, user.username);
-                applyCloudState(snapshot.data, user, users);
+                applyCloudState(snapshot.data, user, users, accessControl);
             } catch (error) {
                 localStorage.removeItem(CLOUD_TOKEN_KEY);
                 localStorage.removeItem(CLOUD_USERNAME_KEY);
@@ -1271,7 +1283,7 @@
                 if (DB.currentUser.role === 'Admin') {
                     navItems.push({ id: 'audit', label: 'Audit Logs', icon: 'fa-clock-rotate-left' });
                     navItems.push({ id: 'users', label: 'User Verification', icon: 'fa-users-gear' });
-                    if (!CLOUD_API_BASE) navItems.push({ id: 'access_control', label: 'Access Control Matrix', icon: 'fa-shield-halved' });
+                    navItems.push({ id: 'access_control', label: 'Access Control Matrix', icon: 'fa-shield-halved' });
                 }
             }
 
@@ -1318,9 +1330,6 @@
 
         // MAIN CONTENT ROUTER
         function renderMainContent() {
-            if (CLOUD_API_BASE && currentTab === 'access_control') {
-                return renderDashboardView();
-            }
             switch(currentTab) {
                 case 'dashboard': return renderDashboardView();
                 case 'bidding': return renderBiddingView();
@@ -2290,6 +2299,7 @@
 
         // ACCESS CONTROL MATRIX MANAGER (ADMIN ONLY)
         function renderAccessControlView() {
+            if (DB.currentUser?.role !== 'Admin') return renderDashboardView();
             const rolesList = ['Admin', 'Procurement Head', 'Procurement Officer', 'Employee', 'Supplier'];
             const allActions = [
                 { key: 'create_pr', label: 'Create Purchase Requisition' },
@@ -2300,8 +2310,14 @@
                 { key: 'manage_delivery_issues', label: 'Handle Delivery Issues' },
                 { key: 'approve_amendment', label: 'Approve Order Amendments' },
                 { key: 'process_payment', label: 'Process Financial Payments' },
+                { key: 'confirm_payment', label: 'Confirm Payment Completion' },
                 { key: 'rate_supplier', label: 'Rate & Evaluate Suppliers' },
-                { key: 'manage_users', label: 'Manage & Verify Users' }
+                { key: 'manage_users', label: 'Manage & Verify Users' },
+                { key: 'manage_permissions', label: 'Manage Access Control Matrix' },
+                { key: 'view_all_po', label: 'View All Purchase Orders' },
+                { key: 'view_assigned_po', label: 'View Assigned Purchase Orders' },
+                { key: 'view_supplier_portal', label: 'Access Supplier Portal' },
+                { key: 'submit_bids', label: 'Submit Supplier Bids' }
             ];
 
             return `
@@ -3472,7 +3488,11 @@
             }
         }
 
-        function saveAccessControlMatrix() {
+        async function saveAccessControlMatrix() {
+            if (DB.currentUser?.role !== 'Admin') {
+                showToast('Administrator access is required to manage permissions.', 'error');
+                return;
+            }
             const checkboxes = document.querySelectorAll('input[type="checkbox"][data-role]');
             const newPerms = {
                 'Admin': [],
@@ -3491,10 +3511,27 @@
                 }
             });
 
-            DB.permissions = newPerms;
-            logAudit('Permissions Updated', 'Access Control Matrix permissions updated by Admin.');
-            Storage.save(DB);
-            showToast('Permissions Matrix successfully updated.', 'success');
+            try {
+                if (CLOUD_API_BASE) {
+                    await cloudRequest('/access-control', {
+                        method: 'PUT',
+                        body: JSON.stringify({ permissions: newPerms })
+                    });
+                }
+                DB.permissions = newPerms;
+                DB.accessControl = Object.entries(newPerms).map(([role, permissions]) => ({ role, permissions }));
+                logAudit('Permissions Updated', 'Access Control Matrix permissions updated by Admin.');
+                await Storage.flush();
+                showToast('Permissions Matrix successfully updated.', 'success');
+                renderApp();
+            } catch (error) {
+                showToast(
+                    error instanceof Error
+                        ? `Could not save the permissions matrix: ${error.message}`
+                        : 'Could not save the permissions matrix.',
+                    'error'
+                );
+            }
         }
 
         function viewPRDetails(id) {

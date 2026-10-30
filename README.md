@@ -40,6 +40,8 @@ For an existing D1 database, apply account verification fields from the `cloudfl
 
 Apply the account access-revocation field with `npx wrangler d1 execute procurecorp-db --remote --file=./migrations/0002_user_access_revocation.sql`. Admins can revoke or restore access and permanently delete non-admin accounts from **User Verification**. Revocation invalidates existing sessions; account deletion removes the user's credentials and sessions.
 
+Apply the Admin-only access-control settings table with `npx wrangler d1 execute procurecorp-db --remote --file=./migrations/0003_access_control_settings.sql`. The role permission matrix is loaded for signed-in accounts and only Admins can change it.
+
 ### 2. Create the first cloud administrator
 
 Set a one-time bootstrap secret from the `cloudflare` directory:

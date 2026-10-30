@@ -23,6 +23,25 @@ type User = {
   access_revoked: number;
 };
 
+const ACCESS_CONTROL_ROLES = ['Admin', 'Procurement Head', 'Procurement Officer', 'Employee', 'Supplier'] as const;
+const ACCESS_CONTROL_ACTIONS = new Set([
+  'create_pr',
+  'approve_pr',
+  'manage_suppliers',
+  'manage_bidding',
+  'record_delivery',
+  'manage_delivery_issues',
+  'approve_amendment',
+  'process_payment',
+  'confirm_payment',
+  'rate_supplier',
+  'manage_users',
+  'manage_permissions',
+  'view_all_po',
+  'view_assigned_po',
+  'view_supplier_portal',
+  'submit_bids',
+]);
 const PASSWORD_ITERATIONS = 100_000;
 const SESSION_DURATION_SECONDS = 12 * 60 * 60;
 
@@ -388,6 +407,67 @@ export default {
         return json({ user }, 200, cors);
       }
 
+      if (pathname === '/access-control' && request.method === 'GET') {
+        const row = await env.DB.prepare('SELECT data FROM access_control_settings WHERE id = 1')
+          .first<{ data: string }>();
+        if (row) return json({ permissions: JSON.parse(row.data) }, 200, cors);
+
+        const snapshot = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1')
+          .first<{ data: string }>();
+        const snapshotData: unknown = snapshot ? JSON.parse(snapshot.data) : null;
+        const legacyAccessControl =
+          snapshotData && typeof snapshotData === 'object' && !Array.isArray(snapshotData)
+            ? (snapshotData as Record<string, unknown>).accessControl
+            : null;
+        if (!Array.isArray(legacyAccessControl)) return json({ permissions: null }, 200, cors);
+
+        const permissions: Record<string, string[]> = {};
+        for (const role of ACCESS_CONTROL_ROLES) {
+          const entry = legacyAccessControl.find(
+            (item: unknown): item is Record<string, unknown> =>
+              !!item && typeof item === 'object' && !Array.isArray(item) && item.role === role
+          );
+          if (!entry || !Array.isArray(entry.permissions)) continue;
+          const rolePermissions = entry.permissions.filter(
+            (permission: unknown): permission is string =>
+              typeof permission === 'string' && ACCESS_CONTROL_ACTIONS.has(permission)
+          );
+          permissions[role] = [...new Set(rolePermissions)];
+        }
+        return json({ permissions }, 200, cors);
+      }
+
+      if (pathname === '/access-control' && request.method === 'PUT') {
+        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        const body = (await request.json()) as { permissions?: unknown };
+        if (!body.permissions || typeof body.permissions !== 'object' || Array.isArray(body.permissions)) {
+          return json({ error: 'A role permissions object is required.' }, 400, cors);
+        }
+        const input = body.permissions as Record<string, unknown>;
+        if (
+          Object.keys(input).length !== ACCESS_CONTROL_ROLES.length ||
+          ACCESS_CONTROL_ROLES.some(role =>
+            !Array.isArray(input[role]) ||
+            input[role].some(permission =>
+              typeof permission !== 'string' || !ACCESS_CONTROL_ACTIONS.has(permission)
+            )
+          )
+        ) {
+          return json({ error: 'Permissions must define every role using supported permission keys.' }, 400, cors);
+        }
+        const normalized = Object.fromEntries(
+          ACCESS_CONTROL_ROLES.map(role => [role, [...new Set(input[role] as string[])]] )
+        );
+        await env.DB.prepare(
+          `INSERT INTO access_control_settings (id, data, updated_at)
+           VALUES (1, ?, datetime('now'))
+           ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`
+        )
+          .bind(JSON.stringify(normalized))
+          .run();
+        return json({ ok: true, permissions: normalized }, 200, cors);
+      }
+
       // The authenticated workspace uses role-specific views; credentials remain in the users table.
       if (pathname === '/enterprise-state' && (request.method === 'GET' || request.method === 'PUT')) {
         if (request.method === 'GET') {
@@ -398,9 +478,14 @@ export default {
         if (!body || typeof body.data !== 'object' || !body.data || Array.isArray(body.data)) {
           return json({ error: 'Invalid business dataset' }, 400, cors);
         }
-        const allowed = ['stockNeeds','bids','proposalMeetings','requisitions','orders','deliveries','amendments','payments','suppliers','ratings','auditLogs','accessControl'];
+        const allowed = ['stockNeeds','bids','proposalMeetings','requisitions','orders','deliveries','amendments','payments','suppliers','ratings','auditLogs'];
+        const legacyAllowed = [...allowed, 'accessControl'];
         const input = body.data as Record<string, unknown>;
-        if (Object.keys(input).some(k => !allowed.includes(k)) || allowed.some(k => !Array.isArray(input[k]))) {
+        if (
+          Object.keys(input).some(k => !legacyAllowed.includes(k)) ||
+          allowed.some(k => !Array.isArray(input[k])) ||
+          (input.accessControl !== undefined && !Array.isArray(input.accessControl))
+        ) {
           return json({ error: 'Only enterprise business record arrays are accepted' }, 400, cors);
         }
         const data = JSON.stringify(input);
