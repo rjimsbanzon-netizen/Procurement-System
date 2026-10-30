@@ -1,4 +1,3 @@
-# ProcureCorp - Procurement System
 
 React + TypeScript procurement app with role-based access, Cloudflare D1 cloud storage, and an offline SQLite store.
 
