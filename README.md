@@ -85,9 +85,11 @@ On the cloud sign-in page, choose **Register Account** to request an Employee or
 - `GET /health`
 - `POST /auth/login` `{ username, password }` (returns user and bearer token)
 - `POST /auth/bootstrap` `{ setupSecret, username, password, name, email }` (one-time)
-- `POST /auth/register` `{ username, password, name, email, role }` (admin only)
+- `POST /auth/register` `{ username, password, name, email, accountType, department?, companyName? }` (public; accounts start pending Admin verification)
 - `POST /auth/logout` (authenticated)
-- `GET /users` (admin only)
+- `GET /users` (admin only; lists accounts for User Verification)
+- `PUT /users/:id` (admin only; approve/reject, change role, revoke/restore access)
+- `DELETE /users/:id` (admin only; permanently delete non-admin account)
 - `GET|POST /suppliers` (staff read, admin write)
 - `DELETE /suppliers/:id` (admin only)
 - `GET|POST /orders` (staff only; employees can create pending requests, admins can update)

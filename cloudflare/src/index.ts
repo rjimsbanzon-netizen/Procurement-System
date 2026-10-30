@@ -159,24 +159,29 @@ function isAdmin(user: User): boolean {
   return user.role === 'admin';
 }
 
-function validAccount(input: {
+function accountValidationError(input: {
   username?: unknown;
   password?: unknown;
   name?: unknown;
   email?: unknown;
-}): input is { username: string; password: string; name: string; email: string } {
-  return (
-    typeof input.username === 'string' &&
-    /^[a-z0-9._-]{3,32}$/i.test(input.username.trim()) &&
-    typeof input.password === 'string' &&
-    input.password.length >= 8 &&
-    input.password.length <= 256 &&
-    typeof input.name === 'string' &&
-    input.name.trim().length > 0 &&
-    input.name.trim().length <= 120 &&
-    typeof input.email === 'string' &&
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)
-  );
+}): string | null {
+  if (typeof input.username !== 'string' || !/^[a-z0-9._-]{3,32}$/i.test(input.username.trim())) {
+    return 'Username must be 3–32 characters and contain only letters, numbers, periods, underscores, or hyphens.';
+  }
+  if (typeof input.password !== 'string' || input.password.length < 8 || input.password.length > 256) {
+    return 'Password must be between 8 and 256 characters.';
+  }
+  if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 120) {
+    return 'Full name is required and must be 120 characters or fewer.';
+  }
+  if (
+    typeof input.email !== 'string' ||
+    input.email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)
+  ) {
+    return 'Enter a valid email address (254 characters or fewer).';
+  }
+  return null;
 }
 
 export default {
@@ -207,21 +212,27 @@ export default {
           department?: unknown;
           companyName?: unknown;
         };
-        if (
-          !validAccount(body) ||
-          (body.accountType !== 'employee' && body.accountType !== 'supplier') ||
-          (body.department !== undefined && typeof body.department !== 'string') ||
-          (body.companyName !== undefined && typeof body.companyName !== 'string')
-        ) {
-          return json({ error: 'Provide valid account details and choose Employee or Supplier' }, 400, cors);
+        const accountError = accountValidationError(body);
+        if (accountError) return json({ error: accountError }, 400, cors);
+        if (body.accountType !== 'employee' && body.accountType !== 'supplier') {
+          return json({ error: 'Choose Employee or Supplier as the account type.' }, 400, cors);
+        }
+        if (body.department !== undefined && typeof body.department !== 'string') {
+          return json({ error: 'Department must be text.' }, 400, cors);
+        }
+        if (body.companyName !== undefined && typeof body.companyName !== 'string') {
+          return json({ error: 'Supplier company name must be text.' }, 400, cors);
         }
         const accountType = body.accountType;
         const appRole = accountType === 'supplier' ? 'Supplier' : 'Employee';
         const role = accountType === 'supplier' ? 'guest' : 'employee';
         const department = accountType === 'employee' ? (body.department as string | undefined)?.trim() ?? '' : '';
         const companyName = accountType === 'supplier' ? (body.companyName as string | undefined)?.trim() ?? '' : '';
-        if (department.length > 120 || companyName.length > 160) {
-          return json({ error: 'Department or company name is too long' }, 400, cors);
+        if (department.length > 120) {
+          return json({ error: 'Department must be 120 characters or fewer.' }, 400, cors);
+        }
+        if (accountType === 'supplier' && (!companyName || companyName.length > 160)) {
+          return json({ error: 'Supplier company name is required and must be 160 characters or fewer.' }, 400, cors);
         }
 
         const id = crypto.randomUUID();
@@ -304,9 +315,8 @@ export default {
         ) {
           return json({ error: 'Invalid setup secret' }, 401, cors);
         }
-        if (!validAccount(body)) {
-          return json({ error: 'Provide a valid username, password (at least 8 characters), name, and email' }, 400, cors);
-        }
+        const accountError = accountValidationError(body);
+        if (accountError) return json({ error: accountError }, 400, cors);
 
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
