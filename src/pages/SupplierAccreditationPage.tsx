@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { DB } from '../store/state';
+import { cloudRequest } from '../services/cloud';
+import { showToast } from '../services/toast';
 import { deleteAccreditation, downloadAccreditation, listAccreditation, reviewAccreditation, uploadAccreditation, type AccreditationCase, type AccreditationDocument } from '../services/sourcing';
 
 const categories=['Business Registration','Tax Certificate','Business Permit','Other'];
@@ -15,9 +17,46 @@ export default function SupplierAccreditationPage() {
   const [error,setError]=useState('');
   const [loading,setLoading]=useState(true);
   const [busy,setBusy]=useState(false);
+  const [reviewErrors,setReviewErrors]=useState<Record<string,string>>({});
+  const [reviewSuccess,setReviewSuccess]=useState<Record<string,string>>({});
   async function reload(){try{const result=await listAccreditation();setCases(result.cases);setError('');}catch(e){setError((e as Error).message);}finally{setLoading(false);}}
   useEffect(()=>{void reload();const timer=window.setInterval(()=>void reload(),60000);return ()=>window.clearInterval(timer);},[]);
   async function execute(task:()=>Promise<unknown>){setBusy(true);setError('');try{await task();await reload();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function submitReview(row:AccreditationCase, decision:'Approved'|'Rejected') {
+    const id=row.supplierUserId;
+    const note=(notes[id]||'').trim();
+    setBusy(true);
+    setReviewErrors(previous=>({...previous,[id]:''}));
+    setReviewSuccess(previous=>({...previous,[id]:''}));
+    try {
+      // The visible account label is local state; the server authorizes the D1 session.
+      // Check the authenticated session so permission failures are actionable.
+      const response=await cloudRequest('/auth/me') as {
+        user?: {role?:string;app_role?:string;username?:string};
+      };
+      const account=response.user;
+      const permitted=account?.role==='admin' ||
+        (account?.role==='employee' && account?.app_role==='Procurement Head');
+      if(!permitted) {
+        throw new Error('Your Cloudflare login session is not an Admin or Procurement Head session. Sign out, sign in to the authorized account, then retry. The accreditation was not changed.');
+      }
+      await reviewAccreditation(id,decision,note);
+      await reload();
+      setReviewSuccess(previous=>({...previous,[id]:`Accreditation ${decision.toLowerCase()} and saved in Cloudflare.`}));
+      showToast(`Accreditation ${decision.toLowerCase()} successfully.`,'success');
+    } catch(e) {
+      const raw=e instanceof Error?e.message:'Accreditation review failed.';
+      const message=raw.includes('Only Admin or Procurement Head may review accreditation')
+        ? `${raw} The Worker does not recognize this session as an authorized reviewer. Sign out and back in as Admin or Procurement Head. If it persists, inspect /auth/me and the review request in the Network tab.`
+        : raw.includes('Origin not allowed')
+        ? `${raw} Check that ALLOWED_ORIGIN in your Worker includes the exact GitHub Pages origin.`
+        : raw;
+      setReviewErrors(previous=>({...previous,[id]:message}));
+      showToast(message,'error');
+    } finally {
+      setBusy(false);
+    }
+  }
   function upload(e:FormEvent){e.preventDefault();if (!file)return;void execute(async()=>{await uploadAccreditation(category,validUntil,file);setFile(null);const elem=document.querySelector<HTMLInputElement>('#accreditation-file');if(elem)elem.value='';});}
   function documentList(row:AccreditationCase) {
     return <div className="mt-3 space-y-2">{row.documents.map((doc:AccreditationDocument)=><div key={doc.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -46,9 +85,13 @@ export default function SupplierAccreditationPage() {
       {documentList(row)}
       {reviewer && <div className="mt-4 flex flex-col gap-2 border-t border-slate-200 pt-4 sm:flex-row">
         <input aria-label={`Review note for ${row.name}`} maxLength={1000} placeholder="Review note / rejection reason" value={notes[row.supplierUserId]||''} onChange={e=>setNotes(old=>({...old,[row.supplierUserId]:e.target.value}))} className="min-w-0 flex-1 rounded border border-slate-300 p-2 text-sm" />
-        <button disabled={busy||row.missing.length>0} onClick={()=>void execute(()=>reviewAccreditation(row.supplierUserId,'Approved',notes[row.supplierUserId]||''))} className="rounded bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Approve accreditation</button>
-        <button disabled={busy||!(notes[row.supplierUserId]||'').trim()} onClick={()=>void execute(()=>reviewAccreditation(row.supplierUserId,'Rejected',notes[row.supplierUserId]))} className="rounded bg-rose-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Reject / Request changes</button>
+        <button disabled={busy||row.missing.length>0} onClick={()=>void submitReview(row,'Approved')} className="rounded bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Approve accreditation</button>
+        <button disabled={busy||!(notes[row.supplierUserId]||'').trim()} onClick={()=>void submitReview(row,'Rejected')} className="rounded bg-rose-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Reject / Request changes</button>
       </div>}
+      {reviewErrors[row.supplierUserId] && <div role="alert" aria-live="assertive" className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-800">
+        <b>Review was not saved.</b> {reviewErrors[row.supplierUserId]}
+      </div>}
+      {reviewSuccess[row.supplierUserId] && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{reviewSuccess[row.supplierUserId]}</p>}
     </article>):<p className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">No accredited supplier records yet.</p>}</section>
   </div>;
 }
