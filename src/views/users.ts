@@ -1,26 +1,20 @@
 // @ts-nocheck
-import { approveUser, deleteUserAccount, rejectUser, revokeUser, updateUserRole } from '../actions/userActions';
+import { getEffectivePosition } from '../domain/staffPositions';
+import type { StaffAssignment } from '../domain/staffPositions';
 import { DB } from '../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
-export function renderUsersView() {
+export function renderUsersView(assignments: StaffAssignment[] = [], positionsLoading = false) {
     return `
         <div class="space-y-4">
             <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                    <div>
-                        <h3 class="font-bold text-slate-800">User Account & Authorization Management</h3>
-                        <p class="text-xs text-slate-500 mt-1">Registration creates an Employee account; choose a position and click Save Role to persist it in Cloudflare D1. Procurement Officer is the delivery staff role for purchase orders, delivery logging, and inspection. Role permissions can be customized in Access Control Matrix.</p>
-                    </div>
-                </div>
-
                 <div class="overflow-x-auto">
                     <table class="w-full text-left text-sm text-slate-600">
                         <thead class="bg-slate-100 text-slate-700 uppercase font-semibold text-xs border-b border-slate-200">
                             <tr>
                                 <th class="p-4">User</th>
                                 <th class="p-4">Email & Dept</th>
-                                <th class="p-4">Assigned Position</th>
+                                <th class="p-4">Position: Department</th>
                                 <th class="p-4">Status</th>
                                 <th class="p-4 text-center">Account Controls</th>
                             </tr>
@@ -28,25 +22,19 @@ export function renderUsersView() {
                         <tbody class="divide-y divide-slate-200">
                             ${DB.users.map(u => `
                                 <tr class="hover:bg-slate-50">
-                                    <td class="p-4 font-bold text-slate-900">${u.name} <span class="text-xs text-slate-400">(@${u.username})</span></td>
+                                    <td class="p-4 font-bold text-slate-900">${u.role === 'Admin' ? 'Admin' : u.name} <span class="text-xs text-slate-400">(@${u.username})</span></td>
                                     <td class="p-4 text-xs">
                                         <div>${u.email}</div>
                                         <div class="text-slate-400">${u.companyName || u.department}</div>
                                     </td>
                                     <td class="p-4">
-                                        ${u.role === 'Admin' ? `<span class="text-xs font-semibold text-slate-700">Administrator</span>` : `
-                                            <div class="flex flex-wrap items-center gap-2">
-                                                <select id="user-role-${u.id}" aria-label="Role for ${u.username}" class="text-xs border border-slate-300 rounded px-2 py-2 focus:ring-2 focus:ring-sky-500">
-                                                    <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
-                                                    <option value="Procurement Officer" ${u.role === 'Procurement Officer' ? 'selected' : ''}>Procurement Officer / Delivery Staff</option>
-                                                    <option value="Procurement Head" ${u.role === 'Procurement Head' ? 'selected' : ''}>Procurement Head</option>
-                                                    <option value="Supplier" ${u.role === 'Supplier' ? 'selected' : ''}>Supplier</option>
-                                                </select>
-                                                <button type="button" data-command="saveUserRole" data-arg1="${u.id}" class="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded text-xs font-semibold transition-colors">Save Role</button>
-                                            </div>
-                                            <p class="mt-1 text-[11px] font-semibold text-slate-600">Saved role: ${u.role}</p>
-                                            <p class="mt-1 max-w-xs text-[11px] text-slate-500">${getRoleAuthorizationSummary(u.role)}</p>
-                                        `}
+                                        ${positionsLoading ? `<span class="text-xs text-slate-500">Position unavailable while cloud assignments load</span>` : (() => {
+                                            const position = getEffectivePosition(u, assignments);
+                                            return `<span class="inline-flex rounded-md border px-2.5 py-1.5 text-xs font-bold ${(position.source === 'conflict' || position.accountDepartmentMismatch) ? 'border-rose-200 bg-rose-50 text-rose-700' : position.source === 'assignment' ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-slate-200 bg-slate-50 text-slate-700'}">${u.role === 'Admin' ? 'Admin' : position.label}</span>
+                                                <p class="mt-2 text-xs text-slate-600">${u.role === 'Admin' ? 'Protected Admin account' : position.detail}</p>
+                                                <p class="mt-1 text-[11px] text-slate-400">Access role (permissions): ${u.role}</p>`;
+                                        })()}
+
                                     </td>
                                     <td class="p-4">
                                         <span class="px-2.5 py-1 rounded-full text-xs font-semibold ${

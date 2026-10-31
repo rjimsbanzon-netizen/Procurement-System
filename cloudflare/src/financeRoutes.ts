@@ -19,6 +19,49 @@ const toCents = (value: unknown) => {
 };
 const amount = (cents: number) => cents / 100;
 const same = (a: unknown,b: unknown) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+
+const reservedDepartments = new Set(['procurement','finance & accounting','finance and accounting','finance','executive']);
+const validDepartmentName=(input:unknown):string|null=>{
+  if(typeof input!=='string')return null;
+  const value=input.trim().replace(/\s+/g,' ');
+  return value.length>0&&value.length<=80&&!/[<>\x00-\x1f]/.test(value)&&value!=='*'?value:null;
+};
+async function knownDepartment(env:FinanceEnv,name:string):Promise<string|null>{
+  const row=await env.DB.prepare('SELECT name FROM organization_departments WHERE name=? COLLATE NOCASE')
+    .bind(name).first<{name:string}>();
+  return row?.name??null;
+}
+function snapshotUsesDepartment(data:Snapshot,department:string):boolean {
+  return [data.requisitions,data.orders,data.payments,data.deliveries].some(
+    collection=>collection.some(record=>same(record.department,department)));
+}
+async function hasDepartmentHistory(env:FinanceEnv,department:string):Promise<boolean>{
+  const count=await env.DB.prepare('SELECT COUNT(*) AS total FROM pr_approval_requests WHERE LOWER(TRIM(department))=LOWER(?)')
+    .bind(department).first<{total:number}>();
+  if(Number(count?.total??0)>0)return true;
+  const {data}=await snapshot(env);
+  return snapshotUsesDepartment(data,department);
+}
+
+/** A Finance Officer must actually belong to Finance & Accounting. */
+function isFinanceDepartment(department:unknown):boolean {
+  const normalized=String(department??'').trim().toLowerCase().replace(/\s+/g,' ');
+  return ['finance & accounting','finance and accounting','finance'].includes(normalized);
+}
+/** A Finance Head is the appointed Department Head for Finance & Accounting.
+ * The Finance Officer must be a DIFFERENT staff account (separation of duties).
+ * These are assignment responsibilities, not changes to the account permission role.
+ */
+async function assignedFinanceHead(env: FinanceEnv): Promise<Row | null> {
+  return env.DB.prepare(`SELECT a.user_id,u.department,u.role,u.app_role,u.status,u.access_revoked
+     FROM finance_approvers a JOIN users u ON u.id=a.user_id
+     WHERE a.step_role='Department Head'
+       AND LOWER(TRIM(a.department)) IN ('finance & accounting','finance and accounting','finance')
+     ORDER BY a.updated_at DESC LIMIT 1`).first<Row>();
+}
+const activeFinanceEmployee=(row:Row|null|undefined):boolean=>Boolean(row && row.role==='employee' &&
+  row.app_role==='Employee' && row.status==='approved' && !row.access_revoked && isFinanceDepartment(row.department));
+
 function reply(value: unknown, status = 200, cors: HeadersInit = {}): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json', ...cors } });
 }
@@ -56,9 +99,11 @@ async function budgetStatus(env:FinanceEnv, data:Snapshot) {
   });
 }
 async function approverSettings(env:FinanceEnv) {
-  const rules = await env.DB.prepare('SELECT finance_from_cents,admin_from_cents FROM finance_rules WHERE id=1').first<Row>();
+  const rules = await env.DB.prepare('SELECT finance_from_cents,admin_from_cents,finance_head_from_cents FROM finance_rules WHERE id=1').first<Row>();
   const assignments = (await env.DB.prepare('SELECT a.step_role,a.department,a.user_id,u.name,u.app_role,u.department AS user_department FROM finance_approvers a JOIN users u ON u.id=a.user_id ORDER BY a.step_role,a.department').all<Row>()).results;
-  return {financeFrom:amount(Number(rules?.finance_from_cents??0)),adminFrom:amount(Number(rules?.admin_from_cents??0)), assignments};
+  return {financeFrom:amount(Number(rules?.finance_from_cents??0)),
+    financeHeadFrom:amount(Number(rules?.finance_head_from_cents??100000000)),
+    adminFrom:amount(Number(rules?.admin_from_cents??0)),assignments};
 }
 function canSeeDepartment(user: FinanceUser, dept: string):boolean {
   return user.role==='admin' || user.app_role==='Procurement Head' || user.app_role==='Finance Officer' || same(user.department,dept);
@@ -66,15 +111,38 @@ function canSeeDepartment(user: FinanceUser, dept: string):boolean {
 async function canApproveStep(env:FinanceEnv,user:FinanceUser,role:string,department:string):Promise<boolean> {
   if(role==='Admin')return user.role==='admin';
   if(role==='Department Head')return false; // The Department Head submits requests but never approves their own PR.
-  if(role==='Procurement Head')return user.app_role==='Procurement Head';
-  const row=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE step_role=? AND department=?').bind(role,role==='Finance Officer'?'*':department).first<{user_id:string}>();
+  if(role==='Procurement Head') {
+    if(user.app_role!=='Procurement Head')return false;
+    // When a Procurement Head is appointed, only the D1-appointed account
+    // can act; old role values cannot create extra Procurement approvers.
+    const selected=await env.DB.prepare("SELECT user_id FROM finance_approvers WHERE step_role='Department Head' AND LOWER(TRIM(department))='procurement' LIMIT 1")
+      .first<{user_id:string}>();
+    return !selected||selected.user_id===user.id;
+  }
+  if(role==='Finance Officer') {
+    // D1 holds historic assignments too. An assignment to someone moved out of
+    // Finance (or made inactive) must no longer authorize invoice/PR approvals.
+    const row=await env.DB.prepare("SELECT a.user_id,u.role,u.app_role,u.department,u.status,u.access_revoked FROM finance_approvers a JOIN users u ON a.user_id=u.id WHERE a.step_role='Finance Officer' AND a.department='*' AND a.user_id=?")
+      .bind(user.id).first<Row>();
+    const head=await assignedFinanceHead(env);
+    return Boolean(row?.user_id===user.id && activeFinanceEmployee(row) && head?.user_id!==user.id);
+  }
+  const row=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE step_role=? AND department=?').bind(role,department).first<{user_id:string}>();
   return row?.user_id===user.id;
 }
 async function approvalList(env:FinanceEnv,user:FinanceUser,data:Snapshot) {
   const requests=(await env.DB.prepare('SELECT * FROM pr_approval_requests ORDER BY created_at DESC').all<Row>()).results;
   const steps=(await env.DB.prepare('SELECT * FROM pr_approval_steps ORDER BY pr_id,step_no').all<Row>()).results;
-  return requests.filter(r=>canSeeDepartment(user,r.department)||r.requested_by===user.id)
-    .map(r=>({prId:r.pr_id,requestedBy:r.requested_by,department:r.department,amount:amount(r.amount_cents),status:r.status,currentStep:r.current_step,totalSteps:r.total_steps,createdAt:r.created_at,pr:data.requisitions.find(p=>p.id===r.pr_id)??null,steps:steps.filter(s=>s.pr_id===r.pr_id).map(s=>({number:s.step_no,role:s.step_role,status:s.status,comment:s.comment,decidedAt:s.decided_at,decidedBy:s.decided_by})),}));
+  const headReviews=(await env.DB.prepare('SELECT * FROM finance_head_signoffs').all<Row>()).results;
+  const financeHead=await assignedFinanceHead(env);
+  return requests.filter(r=>canSeeDepartment(user,r.department)||r.requested_by===user.id ||
+    (financeHead?.user_id===user.id && headReviews.some(h=>h.pr_id===r.pr_id)))
+    .map(r=>{
+      const head=headReviews.find(h=>h.pr_id===r.pr_id);
+      return {prId:r.pr_id,requestedBy:r.requested_by,department:r.department,amount:amount(r.amount_cents),status:r.status,currentStep:r.current_step,totalSteps:r.total_steps,createdAt:r.created_at,pr:data.requisitions.find(p=>p.id===r.pr_id)??null,
+        financeHead:head?{status:head.status,decidedAt:head.decided_at,decidedBy:head.decided_by,comment:head.comment}:null,
+        steps:steps.filter(s=>s.pr_id===r.pr_id).map(s=>({number:s.step_no,role:s.step_role,status:s.status,comment:s.comment,decidedAt:s.decided_at,decidedBy:s.decided_by}))};
+    });
 }
 function verifyDelivery(data:Snapshot,po:Row):boolean {
   const ds=data.deliveries.filter(d=>d.poId===po.id);
@@ -102,13 +170,112 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     if(!staff)return reply({error:'Staff access required.'},403,cors);
     const {data}=await snapshot(env);
     const all=await budgetStatus(env,data);
-    const financeAssigned = await env.DB.prepare("SELECT 1 AS assigned FROM finance_approvers WHERE step_role='Finance Officer' AND user_id=?").bind(user.id).first();
-    return reply({budgets:all.filter(b=>Boolean(financeAssigned)||canSeeDepartment(user,b.department))},200,cors);
+    const financeAssigned = await canApproveStep(env,user,'Finance Officer','*');
+    return reply({budgets:all.filter(b=>financeAssigned||canSeeDepartment(user,b.department))},200,cors);
   }
   if(path==='/finance/staff'&&method==='GET') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
     const people=(await env.DB.prepare("SELECT id,name,username,app_role,department FROM users WHERE role!='guest' AND status='approved' AND access_revoked=0 ORDER BY name").all<Row>()).results;
     return reply({people},200,cors);
+  }
+  // Department directory is editable and is the single source for the Head picker.
+  if(path==='/finance/departments'&&method==='GET') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const rows=(await env.DB.prepare('SELECT name FROM organization_departments ORDER BY name COLLATE NOCASE').all<{name:string}>()).results;
+    return reply({departments:rows.map(row=>row.name)},200,cors);
+  }
+  if(path==='/finance/departments'&&method==='POST') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json() as Row;
+    const name=validDepartmentName(body.name);
+    if(!name)return reply({error:'Use a department name of 1–80 characters without markup.'},400,cors);
+    if(await knownDepartment(env,name))return reply({error:'That department already exists.'},409,cors);
+    await env.DB.prepare('INSERT INTO organization_departments(name) VALUES(?)').bind(name).run();
+    return reply({ok:true,department:name},201,cors);
+  }
+  if(path==='/finance/departments'&&method==='PUT') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json() as Row;
+    const oldName=validDepartmentName(body.oldName),newName=validDepartmentName(body.newName);
+    if(!oldName||!newName)return reply({error:'Old and new department names are required.'},400,cors);
+    const oldCanonical=await knownDepartment(env,oldName);
+    if(!oldCanonical)return reply({error:'The department was not found. Refresh first.'},404,cors);
+    if(same(oldCanonical,newName))return reply({ok:true},200,cors);
+    if(reservedDepartments.has(oldCanonical.toLowerCase()))
+      return reply({error:'Procurement, Finance & Accounting and Executive are required system departments. Their Head assignments remain editable; these department names cannot be renamed.'},409,cors);
+    if(await knownDepartment(env,newName))return reply({error:'Another department already has that name.'},409,cors);
+    // Preserve historical references. A rename is allowed for a department
+    // that has not yet been used on procurement transactions or PR approvals.
+    if(await hasDepartmentHistory(env,oldCanonical))
+      return reply({error:'This department is referenced by existing requisitions, orders or approval history. Its name cannot be changed without altering historical records. Create the new department, then transfer staff.'},409,cors);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE users SET department=?,updated_at=datetime('now') WHERE LOWER(TRIM(department))=LOWER(?)").bind(newName,oldCanonical),
+      env.DB.prepare('UPDATE department_budgets SET department=? WHERE LOWER(TRIM(department))=LOWER(?)').bind(newName,oldCanonical),
+      env.DB.prepare("UPDATE finance_approvers SET department=?,updated_at=datetime('now') WHERE LOWER(TRIM(department))=LOWER(?)").bind(newName,oldCanonical),
+      env.DB.prepare("UPDATE organization_departments SET name=?,updated_at=datetime('now') WHERE name=? COLLATE NOCASE").bind(newName,oldCanonical)
+    ]);
+    return reply({ok:true},200,cors);
+  }
+  if(path==='/finance/departments'&&method==='DELETE') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json() as Row;
+    const name=validDepartmentName(body.name);
+    if(!name)return reply({error:'Department required.'},400,cors);
+    const canonical=await knownDepartment(env,name);
+    if(!canonical)return reply({error:'Department not found.'},404,cors);
+    if(reservedDepartments.has(canonical.toLowerCase()))return reply({error:'This is a required system department and cannot be removed.'},409,cors);
+    if(await hasDepartmentHistory(env,canonical))return reply({error:'Cannot delete a department referenced by procurement history.'},409,cors);
+    const staff=await env.DB.prepare('SELECT id FROM users WHERE LOWER(TRIM(department))=LOWER(?) LIMIT 1').bind(canonical).first();
+    if(staff)return reply({error:'Move or deactivate staff from this department before deleting it.'},409,cors);
+    const head=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE LOWER(TRIM(department))=LOWER(?) LIMIT 1').bind(canonical).first();
+    if(head)return reply({error:'Remove the assigned Head first.'},409,cors);
+    const budget=await env.DB.prepare('SELECT allocated_cents FROM department_budgets WHERE LOWER(TRIM(department))=LOWER(?) LIMIT 1').bind(canonical).first<Row>();
+    if(Number(budget?.allocated_cents??0)>0)return reply({error:'Set this department budget to zero before deleting it.'},409,cors);
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM department_budgets WHERE LOWER(TRIM(department))=LOWER(?)').bind(canonical),
+      env.DB.prepare('DELETE FROM organization_departments WHERE name=? COLLATE NOCASE').bind(canonical)
+    ]);
+    return reply({ok:true},200,cors);
+  }
+  // Admin may transfer a regular Employee into a new department. Preserve
+  // old PR/PO department history, block changes to accounts with active duties.
+  if(path==='/finance/staff/department'&&method==='PUT') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json() as Row;
+    const department=validDepartmentName(body.department);
+    if(typeof body.userId!=='string'||!body.userId||!department)return reply({error:'Select an employee and department.'},400,cors);
+    const canonical=await knownDepartment(env,department);
+    if(!canonical)return reply({error:'Select an existing department, or create one first.'},400,cors);
+    const target=await env.DB.prepare('SELECT id,username,app_role,department,status,access_revoked,role FROM users WHERE id=?').bind(body.userId).first<Row>();
+    if(!target||target.role!=='employee'||target.app_role!=='Employee'||target.status!=='approved'||target.access_revoked)
+      return reply({error:'Only an active regular Employee may transfer departments. Reassign a Head before moving them.'},403,cors);
+    const appointed=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE user_id=? LIMIT 1').bind(body.userId).first();
+    if(appointed)return reply({error:'Remove or reassign this employee’s existing Head/Finance responsibility first.'},409,cors);
+    const pendingApproval=await env.DB.prepare("SELECT pr_id FROM pr_approval_requests WHERE requested_by=? AND status='Pending' LIMIT 1")
+      .bind(body.userId).first();
+    if(pendingApproval)return reply({error:'The employee has a pending approval workflow. Complete it before transferring them.'},409,cors);
+    const {data}=await snapshot(env);
+    if(data.requisitions.some(pr=>pr.status==='Pending' && same(pr.requestedByUsername,target.username)))
+      return reply({error:'This employee has a pending requisition. Complete or reassign it before changing their department.'},409,cors);
+    await env.DB.prepare("UPDATE users SET department=?,updated_at=datetime('now') WHERE id=?").bind(canonical,body.userId).run();
+    return reply({ok:true},200,cors);
+  }
+
+  // Only an administrator may correct the saved home department of an
+  // existing Procurement Head account. This never changes historical PRs.
+  if(path==='/finance/staff/procurement-department'&&method==='PUT') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json() as Row;
+    if(typeof body.userId!=='string'||!body.userId.trim())return reply({error:'Staff account required.'},400,cors);
+    const target=await env.DB.prepare("SELECT id,app_role,department FROM users WHERE id=? AND role!='admin' AND role!='guest'").bind(body.userId).first<Row>();
+    if(!target || target.app_role!=='Procurement Head')return reply({error:'Only a Procurement Head account can be aligned to the Procurement department.'},400,cors);
+    if(!same(target.department,'Procurement')) {
+      const assigned=await env.DB.prepare('SELECT step_role FROM finance_approvers WHERE user_id=? LIMIT 1').bind(body.userId).first<Row>();
+      if(assigned)return reply({error:'Remove conflicting department/Finance assignments before correcting this account.'},409,cors);
+      const result=await env.DB.prepare("UPDATE users SET department='Procurement',updated_at=datetime('now') WHERE id=? AND app_role='Procurement Head'").bind(body.userId).run();
+      if(result.meta.changes!==1)return reply({error:'Account changed on another device. Refresh and retry.'},409,cors);
+    }
+    return reply({ok:true,userId:body.userId,department:'Procurement'},200,cors);
   }
   if(path==='/finance/settings'&&method==='GET') {
     if(!staff)return reply({error:'Staff access required.'},403,cors);
@@ -117,22 +284,71 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   if(path==='/finance/settings'&&method==='PUT') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
     const body=await request.json() as Row;
-    const finance=toCents(body.financeFrom),top=toCents(body.adminFrom);
-    if(!Number.isSafeInteger(finance)||!Number.isSafeInteger(top))return reply({error:'Thresholds must be nonnegative numbers.'},400,cors);
-    await env.DB.prepare("INSERT INTO finance_rules(id,finance_from_cents,admin_from_cents) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET finance_from_cents=excluded.finance_from_cents,admin_from_cents=excluded.admin_from_cents,updated_at=datetime('now')").bind(finance,top).run();
+    const finance=toCents(body.financeFrom),top=toCents(body.adminFrom),head=toCents(body.financeHeadFrom);
+    if(![finance,top,head].every(Number.isSafeInteger))return reply({error:'Thresholds must be nonnegative numbers.'},400,cors);
+    if(head<finance)return reply({error:'Finance Head threshold cannot be below Finance Officer threshold.'},400,cors);
+    await env.DB.prepare("INSERT INTO finance_rules(id,finance_from_cents,admin_from_cents,finance_head_from_cents) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET finance_from_cents=excluded.finance_from_cents,admin_from_cents=excluded.admin_from_cents,finance_head_from_cents=excluded.finance_head_from_cents,updated_at=datetime('now')").bind(finance,top,head).run();
+    return reply({ok:true},200,cors);
+  }
+  if(path==='/finance/assignments'&&method==='DELETE') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json() as Row;
+    if(!['Department Head','Finance Officer'].includes(body.role)||typeof body.department!=='string'||typeof body.userId!=='string')return reply({error:'Invalid assignment removal request.'},400,cors);
+    const department=body.role==='Finance Officer'?'*':body.department.trim();
+    if(!department||!body.userId)return reply({error:'Department and staff account required.'},400,cors);
+    const current=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE step_role=? AND department=?').bind(body.role,department).first<Row>();
+    if(current?.user_id!==body.userId)return reply({error:'Assignment changed on another device. Refresh and try again.'},409,cors);
+    const remove=env.DB.prepare('DELETE FROM finance_approvers WHERE step_role=? AND department=? AND user_id=?').bind(body.role,department,body.userId);
+    if(body.role==='Department Head'&&same(department,'Procurement')){
+      // Procurement Head is the Procurement department's assigned Head. Remove
+      // its special role when the Head is removed; pending approvals then pause.
+      await env.DB.batch([remove,
+        env.DB.prepare("UPDATE users SET app_role='Employee',updated_at=datetime('now') WHERE id=? AND app_role='Procurement Head'").bind(body.userId)]);
+    }else await remove.run();
     return reply({ok:true},200,cors);
   }
   if(path==='/finance/assignments'&&method==='PUT') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
     const body=await request.json() as Row;
     if(!['Department Head','Finance Officer'].includes(body.role)||typeof body.userId!=='string'||typeof body.department!=='string')return reply({error:'Invalid assignment.'},400,cors);
-    const department=body.role==='Finance Officer'?'*':body.department.trim();
-    if(!department)return reply({error:'Department required.'},400,cors);
-    const target=await env.DB.prepare("SELECT id,role,department,status,access_revoked FROM users WHERE id=?").bind(body.userId).first<Row>();
-    if(!target||target.role==='guest'||target.status!=='approved'||target.access_revoked) return reply({error:'Select an active staff account.'},400,cors);
-    if(body.role==='Department Head'&&!same(target.department,department)&&target.role!=='admin')return reply({error:'Department Head must belong to the selected department.'},400,cors);
-    await env.DB.prepare("INSERT INTO finance_approvers(step_role,department,user_id) VALUES(?,?,?) ON CONFLICT(step_role,department) DO UPDATE SET user_id=excluded.user_id,updated_at=datetime('now')").bind(body.role,department,body.userId).run();
-    return reply({ok:true},200,cors);
+    const inputDepartment=body.role==='Finance Officer'?'*':validDepartmentName(body.department);
+    if(!inputDepartment)return reply({error:'Department required.'},400,cors);
+    const department=body.role==='Finance Officer'?'*':await knownDepartment(env,inputDepartment);
+    if(!department)return reply({error:'Choose a registered department in Staff Assignments.'},400,cors);
+    const target=await env.DB.prepare('SELECT id,role,app_role,department,status,access_revoked FROM users WHERE id=?').bind(body.userId).first<Row>();
+    const isProcurementHead=body.role==='Department Head'&&same(department,'Procurement');
+    if(!target||target.role!=='employee'||target.status!=='approved'||target.access_revoked ||
+      (target.app_role!=='Employee'&&!(isProcurementHead&&target.app_role==='Procurement Head')))
+      return reply({error:'Choose an active Employee from the selected department. A current Procurement Head may be reselected for Procurement.'},400,cors);
+    if(body.role==='Finance Officer' && !isFinanceDepartment(target.department))
+      return reply({error:'Finance Officer must be an active employee from Finance & Accounting.'},400,cors);
+    if(body.role==='Department Head' && !(isFinanceDepartment(department)
+      ? isFinanceDepartment(target.department) : same(target.department,department)))
+      return reply({error:'The selected Department Head must belong to that department.'},400,cors);
+    const allAssignments=(await env.DB.prepare('SELECT step_role,department,user_id FROM finance_approvers').all<Row>()).results;
+    if(allAssignments.some(a=>a.user_id===body.userId && a.step_role!==body.role))
+      return reply({error:'Finance Officer and Finance Head must be different people. Remove the existing responsibility before assigning the other.'},409,cors);
+    // De-duplicate old Head assignments, including legacy spelling/case variants.
+    // This is D1-backed: the former Head simply displays Employee, with no
+    // dangerous changes to account roles or historical PRs.
+    const obsolete=allAssignments.filter(a=>a.step_role==='Department Head' && (
+      a.user_id===body.userId && !same(a.department,department) ||
+      body.role==='Department Head' && same(a.department,department) && a.department!==department ||
+      body.role==='Department Head' && isFinanceDepartment(department) && isFinanceDepartment(a.department) && a.department!==department
+    ));
+    const queries=[
+      ...obsolete.map(a=>env.DB.prepare('DELETE FROM finance_approvers WHERE step_role=? AND department=? AND user_id=?').bind(a.step_role,a.department,a.user_id)),
+      env.DB.prepare("INSERT INTO finance_approvers(step_role,department,user_id) VALUES(?,?,?) ON CONFLICT(step_role,department) DO UPDATE SET user_id=excluded.user_id,updated_at=datetime('now')")
+        .bind(body.role,department,body.userId),
+      // Assigning a Procurement Head also changes the permission role in D1.
+      // Demote all other Procurement Heads atomically to enforce ONE Head.
+      ...(isProcurementHead?[
+        env.DB.prepare("UPDATE users SET app_role='Employee',updated_at=datetime('now') WHERE app_role='Procurement Head' AND id<>?").bind(body.userId),
+        env.DB.prepare("UPDATE users SET app_role='Procurement Head',updated_at=datetime('now') WHERE id=? AND department=? AND role='employee'").bind(body.userId,department)
+      ]:[])
+    ];
+    await env.DB.batch(queries);
+    return reply({ok:true,previousHeadDemoted:true},200,cors);
   }
   if(path==='/finance/budgets'&&method==='PUT') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
@@ -149,7 +365,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   if(path==='/finance/approvals'&&method==='GET') {
     if(!staff)return reply({error:'Staff access required.'},403,cors);
     const {data}=await snapshot(env);
-    const financeAssigned = await env.DB.prepare("SELECT 1 AS assigned FROM finance_approvers WHERE step_role='Finance Officer' AND user_id=?").bind(user.id).first();
+    const financeAssigned = await canApproveStep(env,user,'Finance Officer','*');
     return reply({requests:await approvalList(env,financeAssigned?{...user,app_role:'Finance Officer'}:user,data)},200,cors);
   }
   if(path==='/finance/approvals'&&method==='POST') {
@@ -164,26 +380,38 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       "SELECT user_id FROM finance_approvers WHERE step_role='Department Head' AND department=?"
     ).bind(pr.department).first<{user_id:string}>();
     if(!departmentHead) {
-      return reply({error:`Assign a Department Head for ${pr.department} under Department Budgets before submitting this requisition.`},409,cors);
+      return reply({error:`Assign a Department Head for ${pr.department} under Staff Assignments before submitting this requisition.`},409,cors);
     }
     if(!admin && (departmentHead.user_id!==user.id || !same(user.department,pr.department))) {
-      return reply({error:`Only the assigned Department Head for ${pr.department} can submit this requisition. Ask the administrator to assign them under Department Budgets.`},403,cors);
+      return reply({error:`Only the assigned Department Head for ${pr.department} can submit this requisition. Ask the administrator to assign them under Staff Assignments.`},403,cors);
     }
     const cents=toCents(pr.totalCost);
     if(!Number.isSafeInteger(cents))return reply({error:'Invalid PR amount.'},400,cors);
     const rules=await approverSettings(env);
+    const requiresHead=cents>=toCents(rules.financeHeadFrom);
+    if(requiresHead){
+      const head=await assignedFinanceHead(env);
+      const officer=await env.DB.prepare(`SELECT a.user_id,u.role,u.app_role,u.department,u.status,u.access_revoked
+          FROM finance_approvers a JOIN users u ON u.id=a.user_id
+          WHERE a.step_role='Finance Officer' AND a.department='*'`).first<Row>();
+      if(!activeFinanceEmployee(head)||!activeFinanceEmployee(officer)||head?.user_id===officer?.user_id)
+        return reply({error:'High-value PR requires a distinct eligible Finance Officer and Finance Head. Configure both in Staff Assignments.'},409,cors);
+      if(head?.user_id===departmentHead.user_id)
+        return reply({error:'Finance Head cannot authorize a PR they submitted. Assign an independent Finance Head or change the requester.'},409,cors);
+    }
     // Step 1 is an audit-only SUBMISSION marker. Approval starts at step 2.
     // Retaining this row keeps the existing D1 schema (total_steps >= 2) intact.
     const steps=['Department Head','Procurement Head'];
     if(cents>=toCents(rules.financeFrom))steps.push('Finance Officer');
-    if(cents>=toCents(rules.adminFrom))steps.push('Admin');
+    if(requiresHead || cents>=toCents(rules.adminFrom))steps.push('Admin');
     const now=new Date().toISOString();
     try {
       await env.DB.batch([
         env.DB.prepare('INSERT INTO pr_approval_requests(pr_id,department,amount_cents,current_step,total_steps,requested_by,created_at) VALUES(?,?,?,2,?,?,?)').bind(pr.id,pr.department,cents,steps.length,departmentHead.user_id,now),
         env.DB.prepare("INSERT INTO pr_approval_steps(pr_id,step_no,step_role,status,comment,decided_at) VALUES(?,1,'Department Head','Approved',?,?)")
           .bind(pr.id,'Request submitted by Department Head; this is not an approval.',now),
-        ...steps.slice(1).map((role,i)=>env.DB.prepare('INSERT INTO pr_approval_steps(pr_id,step_no,step_role) VALUES(?,?,?)').bind(pr.id,i+2,role))
+        ...steps.slice(1).map((role,i)=>env.DB.prepare('INSERT INTO pr_approval_steps(pr_id,step_no,step_role) VALUES(?,?,?)').bind(pr.id,i+2,role)),
+        ...(requiresHead?[env.DB.prepare("INSERT INTO finance_head_signoffs(pr_id,status) VALUES(?,'Pending')").bind(pr.id)]:[])
       ]);
     } catch(e) { if(String(e).includes('UNIQUE')||String(e).includes('constraint')) return reply({error:'This PR already has an approval workflow.'},409,cors);throw e; }
     return reply({ok:true,steps},201,cors);
@@ -199,6 +427,10 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     const step=await env.DB.prepare('SELECT * FROM pr_approval_steps WHERE pr_id=? AND step_no=?').bind(prId,row.current_step).first<Row>();
     if(!step||step.status!=='Pending'||!await canApproveStep(env,user,step.step_role,row.department))return reply({error:'You are not the assigned approver for this step.'},403,cors);
     if(row.requested_by===user.id) return reply({error:'You cannot approve a requisition that you submitted. Another authorized approver must act.'},403,cors);
+    if(step.step_role==='Admin' && body.decision==='approve'){
+      const signoff=await env.DB.prepare('SELECT status FROM finance_head_signoffs WHERE pr_id=?').bind(prId).first<Row>();
+      if(signoff && signoff.status!=='Approved')return reply({error:'Finance Head must approve this high-value PR after the Finance Officer and before Admin.'},409,cors);
+    }
     const {data,text}=await snapshot(env);
     const pr=data.requisitions.find(p=>p.id===prId);
     // Report which invariant failed instead of blaming the requester for an edit.
@@ -223,6 +455,43 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     const results=await env.DB.batch(changes);
     if(results.some(r=>r.meta.changes!==1))return reply({error:'Concurrent workflow update detected. Refresh and retry; contact admin if status remains inconsistent.'},409,cors);
     return reply({ok:true,status:state,nextStep:final?null:row.current_step+1},200,cors);
+  }
+  // High-value independent Finance Head signoff, after Finance Officer and before Admin.
+  const headDecision=path.match(/^\/finance\/approvals\/([^/]+)\/finance-head$/);
+  if(headDecision && method==='POST'){
+    if(!staff)return reply({error:'Staff access required.'},403,cors);
+    const prId=decodeURIComponent(headDecision[1]);
+    const body=await request.json() as Row;
+    if(!['approve','reject'].includes(body.decision)||typeof body.comment!=='string'||body.comment.length>1000||(body.decision==='reject'&&!body.comment.trim()))
+      return reply({error:'Valid Finance Head decision required; rejection must include a reason.'},400,cors);
+    const head=await assignedFinanceHead(env);
+    if(!activeFinanceEmployee(head)||head?.user_id!==user.id)
+      return reply({error:'Only the assigned Finance Head may authorize this high-value PR.'},403,cors);
+    const requestRow=await env.DB.prepare('SELECT * FROM pr_approval_requests WHERE pr_id=?').bind(prId).first<Row>();
+    const signoff=await env.DB.prepare('SELECT status FROM finance_head_signoffs WHERE pr_id=?').bind(prId).first<Row>();
+    if(!requestRow||requestRow.status!=='Pending'||signoff?.status!=='Pending')return reply({error:'Finance Head authorization is not pending.'},409,cors);
+    if(requestRow.requested_by===user.id)return reply({error:'You cannot authorize a PR you submitted.'},403,cors);
+    const financeStep=await env.DB.prepare("SELECT status FROM pr_approval_steps WHERE pr_id=? AND step_role='Finance Officer'").bind(prId).first<Row>();
+    if(financeStep?.status!=='Approved')return reply({error:'Finance Officer must approve before Finance Head review.'},409,cors);
+    const {data,text}=await snapshot(env);
+    const pr=data.requisitions.find(r=>r.id===prId);
+    if(!pr||pr.status!=='Pending'||toCents(pr.totalCost)!==Number(requestRow.amount_cents)||!same(pr.department,requestRow.department))
+      return reply({error:'PR data changed or is missing. Restore or reconcile before deciding.'},409,cors);
+    const now=new Date().toISOString();
+    const rejected=body.decision==='reject';
+    if(rejected)pr.status='Rejected';
+    const queries=[
+      env.DB.prepare("UPDATE finance_head_signoffs SET status=?,decided_by=?,decided_at=?,comment=? WHERE pr_id=? AND status='Pending'")
+        .bind(rejected?'Rejected':'Approved',user.id,now,body.comment.trim(),prId)
+    ];
+    if(rejected){
+      queries.push(env.DB.prepare("UPDATE pr_approval_requests SET status='Rejected',decided_at=? WHERE pr_id=? AND status='Pending'").bind(now,prId));
+      queries.push(env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=?')
+        .bind(JSON.stringify({...JSON.parse(text),requisitions:data.requisitions}),now,text));
+    }
+    const results=await env.DB.batch(queries);
+    if(results.some(r=>r.meta.changes!==1))return reply({error:'Approval changed on another device. Refresh and review before retrying.'},409,cors);
+    return reply({ok:true,status:rejected?'Rejected':'Approved'},200,cors);
   }
   // A pre-existing desync can arise if a stale browser snapshot changed a PR's
   // status while the D1 approval request remained Pending. Do not auto-approve it.
@@ -315,7 +584,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   if(invoiceMatch&&method==='POST') {
     if(!staff)return reply({error:'Staff access required.'},403,cors);
     const finance=await canApproveStep(env,user,'Finance Officer','*');
-    if(!finance)return reply({error:'Only the assigned Finance Officer may confirm an invoice match. Admin can assign a reviewer in Department Budgets.'},403,cors);
+    if(!finance)return reply({error:'Only the assigned Finance Officer may confirm an invoice match. Admin can assign a reviewer in Staff Assignments.'},403,cors);
     const id=decodeURIComponent(invoiceMatch[1]);
     const inv=await env.DB.prepare('SELECT * FROM supplier_invoices WHERE id=?').bind(id).first<Row>();
     if(!inv)return reply({error:'Invoice not found.'},404,cors);

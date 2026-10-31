@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { deadlineIsOpen, deadlinesLoaded, loadDeadlines } from '../services/sourcing';
 import { renderApp } from '../core/renderBridge';
 import { ACTIVE_MEETING_STATUSES, findMeetingConflicts } from '../domain/meetingSchedule';
 import { canManageBidding, getAgreementFinalizationError } from '../domain/permissions';
@@ -19,7 +20,15 @@ export function openCreateStockNeedModal(prId = null) {
 }
 
 
-export function openSubmitBidModal(needId) {
+export async function openSubmitBidModal(needId) {
+    try { await loadDeadlines(); } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Could not verify bidding deadline.', 'error');
+        return;
+    }
+    if (!deadlineIsOpen(needId)) {
+        showToast('Bidding is closed or its deadline is not configured. Late bids cannot be submitted.', 'error');
+        return;
+    }
     const need = DB.stockNeeds.find(item => item.id === needId);
     if (DB.currentUser.role !== 'Supplier' || !need || need.status !== 'Published' ||
         DB.bids.some(item => item.needId === needId && item.supplierId === DB.currentUser.supplierId)) {

@@ -20,6 +20,7 @@ export default function NotificationsPage() {
     forceUpdate(value => value + 1);
     if (!canAccessTab(item.targetTab)) return;
     if (item.targetTab === 'tracking' && item.targetRecordId) ui.trackingRecordId = item.targetRecordId;
+    if (item.targetTab === 'supplier_messages' && item.messageContext) ui.messageSelection = item.messageContext;
     navigateTo(item.targetTab);
   };
 

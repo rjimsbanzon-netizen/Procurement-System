@@ -34,7 +34,9 @@ const employeeSections: NavSection[] = [
     title: 'Sourcing',
     items: [
       ['bidding', 'Bidding & Proposals', 'fa-gavel'],
-      ['suppliers', 'Suppliers Directory', 'fa-building']
+      ['suppliers', 'Suppliers Directory', 'fa-building'],
+      ['supplier_messages', 'Supplier Messaging', 'fa-comments'],
+      ['accreditation', 'Supplier Accreditation', 'fa-id-card']
     ]
   },
   {
@@ -63,6 +65,7 @@ const employeeSections: NavSection[] = [
     title: 'Administration',
     items: [
       ['audit', 'Audit Logs', 'fa-clock-rotate-left'],
+      ['staff_assignments', 'Staff Assignments', 'fa-user-gear'],
       ['users', 'User Verification', 'fa-users-gear'],
       ['access_control', 'Access Control Matrix', 'fa-shield-halved']
     ]
@@ -82,6 +85,8 @@ const supplierSections: NavSection[] = [
     title: 'Sourcing',
     items: [
       ['bidding', 'Stock Needs & Bidding', 'fa-gavel'],
+      ['supplier_messages', 'Supplier Messaging', 'fa-comments'],
+      ['accreditation', 'My Accreditation', 'fa-id-card'],
       ['documents', 'My Documents', 'fa-folder-open']
     ]
   },

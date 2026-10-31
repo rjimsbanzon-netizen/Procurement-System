@@ -1,10 +1,10 @@
 // @ts-nocheck
+import { submitSecureBid, deadlineIsOpen, loadDeadlines } from '../services/sourcing';
 import { respondToAmendment } from '../actions/amendmentActions';
 import { cancelProposalMeeting } from '../actions/biddingActions';
 import { DEFAULT_MEETING_DURATION_MINUTES, escapeMeetingText, findMeetingConflicts, meetingDuration } from '../domain/meetingSchedule';
 import { closeModal } from '../actions/modalActions';
 import { renderApp } from '../core/renderBridge';
-import { financeAPI } from '../services/finance';
 import { canManageBidding, canManageDeliveryIssues, getAgreementFinalizationError, hasPermission } from '../domain/permissions';
 import { getAvailableRequisitions, getRemainingOrderQuantity, isOrderFullyVerified } from '../domain/procurement';
 import { logAudit } from '../services/audit';
@@ -448,9 +448,9 @@ export function attachMainEvents() {
                 ? `₱${(unitPrice * (need?.targetQty || 0)).toLocaleString()}`
                 : 'Enter a valid unit price';
         });
-        submitBidForm.addEventListener('submit', (e) => {
+        submitBidForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const supplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId);
+            const supplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId) || (DB.currentUser.supplierId && DB.currentUser.companyName ? { id: DB.currentUser.supplierId, name: DB.currentUser.companyName } : null);
             const unitPrice = Number(document.getElementById('bid-unit-price').value);
             const leadTimeDays = Number(document.getElementById('bid-lead-time').value);
             const notes = document.getElementById('bid-notes').value.trim();
@@ -518,11 +518,20 @@ export function attachMainEvents() {
                 status: 'Submitted'
             };
 
-            DB.bids.unshift(newBid);
-            logAudit('Bid Submitted', `Supplier ${supplier.name} submitted bid for ${need.id}`);
-            Storage.save(DB);
-            showToast(`Bid submitted successfully for ${need.title}!`, 'success');
-            closeModal();
+            try {
+                // The Worker checks its own clock, cutoff, account accreditation and duplicate bids.
+                await loadDeadlines();
+                if (!deadlineIsOpen(need.id)) throw new Error('The bidding deadline has passed or submissions are closed.');
+                const result = await submitSecureBid({needId:need.id,unitPrice,leadTimeDays,notes,quotationTerms});
+                // Read the server-committed version instead of writing an old browser snapshot.
+                const snapshot = await cloudRequest('/enterprise-state');
+                DB.bids = Array.isArray(snapshot?.data?.bids) ? snapshot.data.bids : [result.bid, ...DB.bids];
+                if (Array.isArray(snapshot?.data?.auditLogs)) DB.auditLogs = snapshot.data.auditLogs;
+                showToast(`Bid submitted successfully for ${need.title}!`, 'success');
+                closeModal();
+            } catch(error) {
+                showToast(error instanceof Error ? error.message : 'Bid not accepted by Cloudflare.', 'error');
+            }
         });
     }
 

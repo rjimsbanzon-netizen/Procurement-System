@@ -6,6 +6,6 @@ export function setDB(state: ProcurementState): void { DB = state; }
 
 export const ui: {
   currentTab: string; currentModal: string | null; selectedRecord: any;
-  searchQuery: string; trackingRecordId: string | null; authMode: 'signup' | 'login';
+  searchQuery: string; trackingRecordId: string | null; messageSelection: string | null; authMode: 'signup' | 'login';
 } = { currentTab: 'dashboard', currentModal: null, selectedRecord: null,
-  searchQuery: '', trackingRecordId: null, authMode: 'login' };
+  searchQuery: '', trackingRecordId: null, messageSelection: null, authMode: 'login' };

@@ -6,6 +6,7 @@ import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
 import { handleDocumentRoutes } from './documentRoutes';
 import { handleNotificationRoutes } from './notificationRoutes';
 import { handleFinanceRoutes, validateFinanceSnapshotWrite } from './financeRoutes';
+import { handleSourcingRoutes, validateSourcingSnapshotWrite } from './sourcingRoutes';
 
 export interface Env {
   DB: D1Database;
@@ -403,6 +404,10 @@ export default {
       const financeResponse = await handleFinanceRoutes(request, env, user, cors);
       if (financeResponse) return financeResponse;
 
+      // Feature 9-11: authenticated supplier messaging, deadlines, accreditation.
+      const sourcingResponse = await handleSourcingRoutes(request, env, user, cors);
+      if (sourcingResponse) return sourcingResponse;
+
       if (pathname === '/auth/me' && request.method === 'GET') {
         return json({ user }, 200, cors);
       }
@@ -476,6 +481,8 @@ export default {
           env, input, current ? JSON.parse(current.data) as Record<string, unknown> : {}, user
         );
         if (financeError) return json({ error: financeError }, 409, cors);
+        const sourcingError = validateSourcingSnapshotWrite(input, current ? JSON.parse(current.data) as Record<string, unknown> : {}, user);
+        if (sourcingError) return json({ error: sourcingError }, 409, cors);
         const data = JSON.stringify(input);
         if (data.length > 1000000) return json({ error: 'Dataset too large' }, 413, cors);
         await env.DB.prepare("INSERT INTO enterprise_state (id, data, updated_at) VALUES (1, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')").bind(data).run();

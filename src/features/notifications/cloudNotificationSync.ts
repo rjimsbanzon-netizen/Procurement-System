@@ -10,11 +10,15 @@ import type { ProcurementRecord, User } from '../../types/procurement';
  */
 export type CloudNotificationStatus = 'local' | 'connecting' | 'synced' | 'offline';
 export type NotificationDataSnapshot = Record<string, ProcurementRecord[]>;
+export type CloudMessageAlert = {
+  id: string; entityType: string; entityId: string; senderName: string; createdAt: string;
+};
 
 type AccountCache = {
   read: Set<string>;
   queued: Set<string>;
   snapshot: NotificationDataSnapshot | null;
+  messageAlerts: CloudMessageAlert[];
   status: CloudNotificationStatus;
   lastError: string | null;
 };
@@ -35,7 +39,7 @@ function storeFor(user: User): AccountCache {
   const id = accountId(user);
   let store = stores.get(id);
   if (!store) {
-    store = { read: new Set(), queued: new Set(), snapshot: null,
+    store = { read: new Set(), queued: new Set(), snapshot: null, messageAlerts: [],
       status: CLOUD_API_BASE ? 'connecting' : 'local', lastError: null };
     stores.set(id, store);
   }
@@ -61,6 +65,10 @@ export function getCloudReadIds(user: User | null = DB.currentUser): ReadonlySet
 
 export function getCloudNotificationSnapshot(user: User | null = DB.currentUser): NotificationDataSnapshot | null {
   return user ? storeFor(user).snapshot : null;
+}
+
+export function getCloudMessageAlerts(user: User | null = DB.currentUser): readonly CloudMessageAlert[] {
+  return user ? storeFor(user).messageAlerts : [];
 }
 
 function localReadIds(user: User): string[] {
@@ -115,9 +123,16 @@ async function refreshCloudNotifications(): Promise<void> {
   const expectedId = accountId(user);
   const store = storeFor(user);
   try {
-    const [receiptsResult, workspaceResult] = await Promise.all([
+    const canMessage = ['Admin', 'Procurement Head', 'Procurement Officer', 'Supplier'].includes(user.role);
+    const [receiptsResult, workspaceResult, messagesResult] = await Promise.all([
       cloudRequest('/notifications/read'),
       cloudRequest('/enterprise-state'),
+      canMessage ? cloudRequest('/sourcing/message-alerts').catch((error: unknown) => {
+        // An old Worker deployment may not have the new endpoint yet.
+        // Keep all other notifications working if messaging is unavailable.
+        console.warn('Message alerts unavailable; confirm the latest sourcingRoutes.ts is deployed.', error);
+        return null;
+      }) : Promise.resolve(null),
     ]);
     const receipts = receiptsResult as { readIds?: unknown };
     const workspace = workspaceResult as { data?: unknown };
@@ -126,6 +141,18 @@ async function refreshCloudNotifications(): Promise<void> {
     const remoteReads: string[] = Array.isArray(receipts.readIds)
       ? receipts.readIds.filter((id: unknown): id is string => typeof id === 'string') : [];
     remoteReads.forEach(id => store.read.add(id));
+    if (messagesResult && typeof messagesResult === 'object') {
+      const rows = (messagesResult as { alerts?: unknown }).alerts;
+      if (Array.isArray(rows)) {
+        store.messageAlerts = rows.filter((item): item is CloudMessageAlert => {
+          if (!item || typeof item !== 'object') return false;
+          const row = item as Record<string, unknown>;
+          return typeof row.id === 'string' && typeof row.entityType === 'string' &&
+            typeof row.entityId === 'string' && typeof row.senderName === 'string' &&
+            typeof row.createdAt === 'string';
+        }).slice(0, 200);
+      }
+    }
 
     // Migrate existing browser-local read marks to the user's cloud account.
     // Never delete the browser copy when the network fails.

@@ -19,6 +19,8 @@ export function canAccessTab(tab) {
         case 'approvals': return !isSupplier;
         case 'budgets': return !isSupplier;
         case 'invoice_matching': return true;
+        case 'supplier_messages': return isSupplier || ['Admin','Procurement Head','Procurement Officer'].includes(DB.currentUser.role);
+        case 'accreditation': return isSupplier || ['Admin','Procurement Head'].includes(DB.currentUser.role);
         case 'documents':
         case 'pdf_generator': return true;
         case 'tracking': return isSupplier ? hasPermission('view_assigned_po') : hasPermission('create_pr') || hasPermission('approve_pr') || hasPermission('view_all_po');
@@ -39,6 +41,7 @@ export function canAccessTab(tab) {
                 : hasPermission('process_payment') || hasPermission('confirm_payment');
         case 'suppliers': return hasPermission('manage_suppliers') || hasPermission('rate_supplier');
         case 'audit': return DB.currentUser.role === 'Admin';
+        case 'staff_assignments': return DB.currentUser.role === 'Admin';
         case 'users': return DB.currentUser.role === 'Admin' && hasPermission('manage_users');
         case 'access_control': return DB.currentUser.role === 'Admin';
         default: return false;

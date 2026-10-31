@@ -1,6 +1,6 @@
 import { DB } from '../../store/state';
 import type { ProcurementRecord, ProcurementState, User } from '../../types/procurement';
-import { getCloudNotificationSnapshot, getCloudReadIds, queueCloudNotificationRead } from './cloudNotificationSync';
+import { getCloudNotificationSnapshot, getCloudMessageAlerts, getCloudReadIds, queueCloudNotificationRead } from './cloudNotificationSync';
 
 /**
  * Notifications are derived from existing procurement records.
@@ -18,6 +18,7 @@ export interface ProcurementNotification {
   kind: NotificationKind;
   targetTab: string;
   targetRecordId?: string;
+  messageContext?: string;
   /** True for past audit events. History is not an outstanding unread alert. */
   historical?: boolean;
 }
@@ -48,6 +49,19 @@ export function markNotificationRead(notificationId: string, user = DB.currentUs
   try { localStorage.setItem(userKey(user), JSON.stringify([...read].slice(-2000))); }
   catch { /* Storage may be unavailable in restricted browsing contexts. */ }
   queueCloudNotificationRead([notificationId], user);
+}
+
+/** Opening a conversation marks the messages actually loaded into that thread as read. */
+export function markMessageNotificationsRead(messageIds: string[], user = DB.currentUser): void {
+  if (!user || !messageIds.length) return;
+  const alreadyRead = readIds(user);
+  const ids = [...new Set(messageIds.filter(Boolean).map(id => `message:${id}`))]
+    .filter(id => !alreadyRead.has(id));
+  if (!ids.length) return;
+  ids.forEach(id => alreadyRead.add(id));
+  try { localStorage.setItem(userKey(user), JSON.stringify([...alreadyRead].slice(-2000))); }
+  catch { /* Browser storage unavailable; D1 receipts still sync. */ }
+  queueCloudNotificationRead(ids, user);
 }
 
 export function markAllNotificationsRead(notifications: ProcurementNotification[], user = DB.currentUser): void {
@@ -266,6 +280,22 @@ export function getNotifications(state: ProcurementState = DB, user: User | null
       });
     });
   }
+
+  // Cloudflare messages become ordinary read/unread alerts. The Worker has
+  // already checked account access and removed messages sent by this user.
+  getCloudMessageAlerts(user).forEach(message => {
+    if (!['BID', 'MEETING', 'PO', 'DELIVERY', 'ISSUE'].includes(message.entityType)) return;
+    add({
+      id: `message:${message.id}`,
+      title: 'New supplier message',
+      description: `${message.senderName} sent a message about ${message.entityType} ${message.entityId}.`,
+      createdAt: message.createdAt,
+      kind: 'action',
+      targetTab: 'supplier_messages',
+      targetRecordId: message.entityId,
+      messageContext: `${message.entityType}|${message.entityId}`,
+    });
+  });
 
   if (procurement) {
     state.deliveries.filter(delivery => delivery.complianceStatus === 'Pending Inspection').forEach(delivery => {

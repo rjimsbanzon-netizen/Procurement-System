@@ -1,3 +1,5 @@
+import SupplierMessagesPage from './pages/SupplierMessagesPage';
+import SupplierAccreditationPage from './pages/SupplierAccreditationPage';
 import NotificationsPage from './features/notifications/NotificationsPage';
 import TrackingPage from './features/tracking/TrackingPage';
 import DocumentsPage from './pages/DocumentsPage';
@@ -15,6 +17,7 @@ import PaymentsPage from './pages/PaymentsPage';
 import SuppliersPage from './pages/SuppliersPage';
 import AccessControlPage from './pages/AccessControlPage';
 import AuditPage from './pages/AuditPage';
+import StaffAssignmentsPage from './pages/StaffAssignmentsPage';
 import UsersPage from './pages/UsersPage';
 import { useEffect, useState } from 'react';
 import { DB, ui, setDB } from './store/state';
@@ -45,6 +48,8 @@ function CurrentPage() {
     case 'invoice_matching': return <InvoiceMatchingPage />;
     case 'pdf_generator': return <PdfDocumentsPage />;
     case 'bidding': return <BiddingPage />;
+    case 'supplier_messages': return <SupplierMessagesPage />;
+    case 'accreditation': return <SupplierAccreditationPage />;
     case 'requisitions': return <RequisitionsPage />;
     case 'orders': return <OrdersPage />;
     case 'delivery': return <DeliveryPage />;
@@ -53,6 +58,7 @@ function CurrentPage() {
     case 'suppliers': return <SuppliersPage />;
     case 'access_control': return <AccessControlPage />;
     case 'audit': return <AuditPage />;
+    case 'staff_assignments': return <StaffAssignmentsPage />;
     case 'users': return <UsersPage />;
     default: return <DashboardPage />;
   }

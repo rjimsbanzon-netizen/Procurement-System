@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { getDeadline, deadlineIsOpen } from '../services/sourcing';
 import { canCancelProposalMeeting, openCancelProposalMeetingModal, openCreateStockNeedModal, openFinalizeAgreementModal, openScheduleMeetingModal, openSubmitBidModal, respondProposalMeeting, selectBid } from '../actions/biddingActions';
 import { canManageBidding, getAgreementFinalizationError } from '../domain/permissions';
 import { DB } from '../store/state';
@@ -70,6 +71,8 @@ export function renderBiddingView() {
                         const bidCount = DB.bids.filter(b => b.needId === sn.id).length;
                         const userBid = isSupplier ? DB.bids.find(b => b.needId === sn.id && b.supplierId === DB.currentUser.supplierId) : null;
                         const linkedPR = DB.requisitions.find(pr => pr.id === sn.prId);
+                        const deadline = getDeadline(sn.id);
+                        const openForBids = deadlineIsOpen(sn.id);
                         return `
                             <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between space-y-4">
                                 <div>
@@ -84,6 +87,7 @@ export function renderBiddingView() {
                                         <p><span class="font-semibold text-slate-700">Target Qty:</span> ${sn.targetQty} units</p>
                                         <p><span class="font-semibold text-slate-700">Budget Cap:</span> ₱${(sn.budgetCap || 0).toLocaleString()}</p>
                                         <p><span class="font-semibold text-slate-700">Tech Specs:</span> ${sn.techSpecs}</p>
+                                        <p class="font-semibold ${openForBids ? 'text-emerald-700' : 'text-amber-700'}">${!deadline ? 'Deadline not configured — bidding closed' : deadline.manuallyClosed ? 'Bidding manually closed' : openForBids ? `Bids accepted until ${new Date(deadline.closesAt).toLocaleString()}` : 'Submission deadline passed — bidding closed'}</p>
                                         ${linkedPR ? `<p><span class="font-semibold text-slate-700">Purchase Request:</span> ${linkedPR.id}</p>` : ''}
                                     </div>
                                 </div>
@@ -96,6 +100,8 @@ export function renderBiddingView() {
                                             <span class="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-semibold">
                                                 <i class="fa-solid fa-check mr-1"></i> Bid Submitted (₱${userBid.totalCost.toLocaleString()})
                                             </span>
+                                        ` : !openForBids ? `
+                                            <span class="text-amber-700 font-semibold">Bidding closed</span>
                                         ` : `
                                             <button data-command="openSubmitBidModal" data-arg1="${sn.id}" class="px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-colors flex items-center space-x-1.5">
                                                 <i class="fa-solid fa-hand-holding-dollar"></i>
