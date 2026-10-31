@@ -59,6 +59,71 @@ export function openScheduleMeetingModal(bidId) {
 }
 
 
+/** Only procurement managers may revise a meeting that is still in the proposal stage. */
+export function canRescheduleProposalMeeting(meetingId: string): boolean {
+    const meeting = DB.proposalMeetings.find(item => item.id === meetingId);
+    if (!meeting || !canManageBidding()) return false;
+    if (!['Pending Response', 'Agreed', 'Declined'].includes(meeting.status) || meeting.rescheduleRequest?.status === 'Pending') return false;
+    const bid = DB.bids.find(item => item.id === meeting.bidId);
+    const need = DB.stockNeeds.find(item => item.id === meeting.needId);
+    if (!bid || !need || bid.needId !== need.id || bid.supplierId !== meeting.supplierId) return false;
+    // An agreed meeting may already have produced a PO. The PO is independent
+    // of later meeting schedule changes and must never be modified here.
+    const matchingOrder = DB.orders.some(order => order.bidId === bid.id && order.supplierId === meeting.supplierId);
+    return matchingOrder || (bid.status === 'Selected' && need.selectedBidId === bid.id);
+}
+
+export function openRescheduleMeetingModal(meetingId: string): void {
+    if (!canRescheduleProposalMeeting(meetingId)) {
+        showToast('Only the Admin or Procurement Head can reschedule a meeting linked to a selected or awarded supplier.', 'error');
+        return;
+    }
+    ui.selectedRecord = meetingId;
+    ui.currentModal = 'reschedule_meeting';
+    renderApp();
+}
+
+/** Suppliers can propose a new slot only for their own invited meetings. */
+export function canRequestMeetingReschedule(meetingId: string): boolean {
+    const meeting = DB.proposalMeetings.find(m => m.id === meetingId);
+    if (!meeting || DB.currentUser?.role !== 'Supplier' ||
+        meeting.supplierId !== DB.currentUser.supplierId ||
+        !['Pending Response', 'Agreed', 'Declined'].includes(meeting.status) ||
+        meeting.rescheduleRequest?.status === 'Pending') return false;
+    const bid = DB.bids.find(b => b.id === meeting.bidId);
+    const need = DB.stockNeeds.find(n => n.id === meeting.needId);
+    return Boolean(bid && need && bid.needId === need.id && bid.supplierId === meeting.supplierId &&
+      ((bid.status === 'Selected' && need.selectedBidId === bid.id) ||
+        DB.orders.some(o => o.bidId === bid.id && o.supplierId === meeting.supplierId)));
+}
+
+export function openRequestMeetingRescheduleModal(meetingId: string): void {
+    if (!canRequestMeetingReschedule(meetingId)) {
+        showToast('Only the invited supplier can request a schedule change for an eligible meeting.', 'error');
+        return;
+    }
+    ui.selectedRecord = meetingId;
+    ui.currentModal = 'request_meeting_reschedule';
+    renderApp();
+}
+
+export function canReviewMeetingReschedule(meetingId: string): boolean {
+    const meeting = DB.proposalMeetings.find(m => m.id === meetingId);
+    return Boolean(meeting && canManageBidding() &&
+      ['Pending Response', 'Agreed', 'Declined'].includes(meeting.status) &&
+      meeting.rescheduleRequest?.status === 'Pending');
+}
+
+export function openReviewMeetingRescheduleModal(meetingId: string): void {
+    if (!canReviewMeetingReschedule(meetingId)) {
+        showToast('No pending supplier rescheduling request is available for this meeting.', 'error');
+        return;
+    }
+    ui.selectedRecord = meetingId;
+    ui.currentModal = 'review_meeting_reschedule';
+    renderApp();
+}
+
 export function selectBid(bidId) {
     const bid = DB.bids.find(item => item.id === bidId);
     const need = DB.stockNeeds.find(item => item.id === bid?.needId);
@@ -97,7 +162,7 @@ export function respondProposalMeeting(mtgId, responseStatus) {
     const mtg = DB.proposalMeetings.find(m => m.id === mtgId);
     if (DB.currentUser.role === 'Supplier' && mtg &&
         mtg.supplierId === DB.currentUser.supplierId &&
-        mtg.status === 'Pending Response' &&
+        mtg.status === 'Pending Response' && mtg.rescheduleRequest?.status !== 'Pending' &&
         ['Agreed', 'Declined'].includes(responseStatus)) {
         if (responseStatus === 'Agreed' && findMeetingConflicts(mtg, DB.proposalMeetings, mtg.id).length) {
             showToast('This time overlaps another active proposal meeting. Ask procurement to reschedule before accepting.', 'warning');
@@ -117,7 +182,7 @@ export function respondProposalMeeting(mtgId, responseStatus) {
 /** Both the procurement team and the invited supplier can cancel an active invite. */
 export function canCancelProposalMeeting(meetingId: string): boolean {
     const meeting = DB.proposalMeetings.find(m => m.id === meetingId);
-    if (!meeting || !ACTIVE_MEETING_STATUSES.some(status => status === meeting.status)) return false;
+    if (!meeting || !ACTIVE_MEETING_STATUSES.some(status => status === meeting.status) || meeting.rescheduleRequest?.status === 'Pending') return false;
     // Procurement staff may cancel a historical meeting even after a PO, but that
     // cancellation does NOT revoke or modify the purchase order.
     if (canManageBidding()) return true;

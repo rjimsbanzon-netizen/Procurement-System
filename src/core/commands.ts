@@ -4,7 +4,7 @@ import { approvePR, rejectPR, viewPRDetails } from '../actions/requisitionAction
 import { approveUser, deleteUserAccount, rejectUser, revokeUser, saveAccessControlMatrix, saveUserRole, updateUserRole } from '../actions/userActions';
 import { closeModal } from '../actions/modalActions';
 import { navigateTo } from './renderBridge';
-import { openCreateStockNeedModal, openFinalizeAgreementModal, openScheduleMeetingModal, openSubmitBidModal, respondProposalMeeting, selectBid } from '../actions/biddingActions';
+import { openCancelProposalMeetingModal, openCreateStockNeedModal, openFinalizeAgreementModal, openRequestMeetingRescheduleModal, openReviewMeetingRescheduleModal, openRescheduleMeetingModal, openScheduleMeetingModal, openSubmitBidModal, respondProposalMeeting, selectBid } from '../actions/biddingActions';
 
 /** Explicit command whitelist: no eval, no inline browser JavaScript. */
 export const commands: Record<string, (...args: any[]) => unknown> = {
@@ -16,6 +16,7 @@ export const commands: Record<string, (...args: any[]) => unknown> = {
   deleteUserAccount,
   navigateTo,
   openAddSupplierModal,
+  openCancelProposalMeetingModal,
   openCreateStockNeedModal,
   openFinalizeAgreementModal,
   openInitiateAmendmentModal,
@@ -23,6 +24,9 @@ export const commands: Record<string, (...args: any[]) => unknown> = {
   openProcessPaymentModal,
   openRateSupplierModal,
   openRecordDeliveryModal,
+  openRequestMeetingRescheduleModal,
+  openReviewMeetingRescheduleModal,
+  openRescheduleMeetingModal,
   openScheduleMeetingModal,
   openSubmitBidModal,
   rejectAmendment,

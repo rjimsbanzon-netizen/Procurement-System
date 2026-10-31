@@ -5,6 +5,14 @@ import type { StaffAssignment } from '../domain/staffPositions';
 import { DB, ui } from '../store/state';
 import { getCurrentPermissionRole } from '../domain/permissions';
 import { renderApp } from '../core/renderBridge';
+const MODULE_TITLES: Record<string, string> = {
+  bidding: 'Stock Needs & Bidding',
+  bidding_deadlines: 'Bidding Deadlines',
+  bid_comparison: 'Submitted Vendor Bids & Comparison',
+  bid_evaluation: 'Supplier Bid Evaluation',
+  proposal_meetings: 'Proposal Meetings',
+};
+
 export function Header() {
   const user = DB.currentUser;
   const [assignments,setAssignments]=useState<StaffAssignment[]>([]);
@@ -30,7 +38,7 @@ export function Header() {
   const positionLabel = user?.role==='Admin' ? 'Executive' : position ? (['Head','Finance Head','Finance Officer'].includes(position.name) ? `${position.name} • ${position.department}` : position.label) : '';
   return <header className="enterprise-header bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between shadow-sm z-10">
     <div className="flex items-center space-x-3"><span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Module:</span>
-      <h1 className="text-lg font-bold text-slate-800 capitalize">{ui.currentTab.replace('_', ' ')}</h1></div>
+      <h1 className="text-lg font-bold text-slate-800 capitalize">{MODULE_TITLES[ui.currentTab] || ui.currentTab.replace(/_/g, ' ')}</h1></div>
     <div className="flex items-center space-x-4">
       <NotificationBell />
       <div className="text-right hidden sm:block"><div className="text-sm font-bold text-slate-800">{user?.role==='Admin'?'Admin':user?.name}</div>

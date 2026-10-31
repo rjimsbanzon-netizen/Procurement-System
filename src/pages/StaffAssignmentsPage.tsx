@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { confirmAction, requestInput } from '../services/actionDialogs';
 import type { FormEvent } from 'react';
 import { DB } from '../store/state';
 import { financeAPI } from '../services/finance';
@@ -85,22 +86,22 @@ export default function StaffAssignmentsPage(){
     }catch(e){setError(e instanceof Error?e.message:String(e));}
     finally{setBusy(false);}
   }
-  function assign(event:FormEvent){
+  async function assign(event:FormEvent){
     event.preventDefault();
     if(!userId||(duty==='Department Head'&&!department))return;
     if(!eligible.some(p=>p.id===userId)){
       setError('Choose an active employee who belongs to this department.');return;
     }
-    if(current&&current.user_id!==userId&&!window.confirm(
-      `Replace ${current.name} as ${displayDuty(saved.role,saved.department)}? The previous Head returns to Employee; their account and historical PRs remain.`
-    ))return;
+    if(current&&current.user_id!==userId&&!await confirmAction({
+      title:'Replace appointed Head',message:`Replace ${current.name} as ${displayDuty(saved.role,saved.department)}? The previous Head returns to Employee; their account and historical PRs remain.`,tone:'warning',confirmText:'Replace assignment'
+    }))return;
     void operate(async()=>{
       await financeAPI.assign(saved.role,saved.department,userId);
       setUserId('');
     },`Saved ${displayDuty(saved.role,saved.department)} to Cloudflare. Only the new appointed Head has this responsibility.`);
   }
-  function remove(role:SavedDuty,dep:string,id:string,name:string){
-    if(!window.confirm(`Remove ${name} as ${displayDuty(role,dep)}? Pending approvals may pause until you assign a replacement.`))return;
+  async function remove(role:SavedDuty,dep:string,id:string,name:string){
+    if(!await confirmAction({title:'Remove staff assignment',message:`Remove ${name} as ${displayDuty(role,dep)}? Pending approvals may pause until you assign a replacement.`,tone:'warning',confirmText:'Remove assignment'}))return;
     void operate(()=>financeAPI.unassign(role,dep,id),`${name} is no longer ${displayDuty(role,dep)}.`);
   }
   function createDepartment(event:FormEvent){
@@ -109,28 +110,28 @@ export default function StaffAssignmentsPage(){
     if(!name)return;
     void operate(async()=>{await financeAPI.addDepartment(name);setNewDepartment('')},`Created department: ${name}. You can now transfer an employee and appoint its Head.`);
   }
-  function renameDepartment(name:string){
-    const renamed=window.prompt(`Rename ${name} to:`,name)?.trim();
+  async function renameDepartment(name:string){
+    const renamed=await requestInput({title:'Rename Department',message:`Enter a new name for ${name}.`,label:'New department name',initialValue:name,required:true,confirmText:'Review rename'});
     if(!renamed||renamed===name)return;
-    if(!window.confirm(`Rename ${name} to ${renamed}? This changes the department for its staff and current assignments. Existing procurement history is protected.`))return;
+    if(!await confirmAction({title:'Confirm department rename',message:`Rename ${name} to ${renamed}? This changes the department for its staff and current assignments. Existing procurement history is protected.`,tone:'warning',confirmText:'Rename department'}))return;
     void operate(()=>financeAPI.renameDepartment(name,renamed),`Department renamed to ${renamed}.`);
   }
-  function deleteDepartment(name:string){
-    if(!window.confirm(`Remove department ${name}? This works only when it has no staff, assigned Head, history or allocated budget.`))return;
+  async function deleteDepartment(name:string){
+    if(!await confirmAction({title:'Delete unused department',message:`Remove department ${name}? This works only when it has no staff, assigned Head, history or allocated budget.`,tone:'danger',confirmText:'Delete department'}))return;
     void operate(()=>financeAPI.removeDepartment(name),`Removed unused department ${name}.`);
   }
-  function moveEmployee(event:FormEvent){
+  async function moveEmployee(event:FormEvent){
     event.preventDefault();
     const person=people.find(p=>p.id===transferUser);
     if(!person||!transferDepartment)return;
-    if(!window.confirm(`Move ${person.name} from ${person.department} to ${transferDepartment}? Historical PRs stay in their original department.`))return;
+    if(!await confirmAction({title:'Confirm employee transfer',message:`Move ${person.name} from ${person.department} to ${transferDepartment}? Historical PRs stay in their original department.`,tone:'warning',confirmText:'Transfer employee'}))return;
     void operate(async()=>{
       await financeAPI.moveEmployee(transferUser,transferDepartment);
       setTransferUser('');setTransferDepartment('');
     },`${person.name} is now assigned to ${transferDepartment}.`);
   }
-  function correctProcurementHead(person:Person){
-    if(!window.confirm(`Correct ${person.name}'s saved department to Procurement? Historical PRs remain unchanged.`))return;
+  async function correctProcurementHead(person:Person){
+    if(!await confirmAction({title:'Correct Procurement department',message:`Correct ${person.name}'s saved department to Procurement? Historical PRs remain unchanged.`,tone:'warning',confirmText:'Correct department'}))return;
     void operate(()=>financeAPI.correctProcurementDepartment(person.id),`${person.name}'s home department is now Procurement.`);
   }
 

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { confirmAction } from '../services/actionDialogs';
 import { DB } from '../store/state';
 import { cloudRequest } from '../services/cloud';
 import { showToast } from '../services/toast';
@@ -62,7 +63,7 @@ export default function SupplierAccreditationPage() {
     return <div className="mt-3 space-y-2">{row.documents.map((doc:AccreditationDocument)=><div key={doc.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <div className="min-w-0"><p className="break-words text-sm font-medium">{doc.category}: {doc.fileName}</p><p className={'text-xs '+(doc.validUntil<today?'text-rose-700':'text-slate-500')}>Valid until {doc.validUntil} · {(doc.size/1024).toFixed(0)} KB {doc.validUntil<today?'· Expired':''}</p></div>
       <div className="flex gap-2"><button onClick={()=>void execute(()=>downloadAccreditation(doc))} className="rounded border border-slate-300 px-3 py-1.5 text-xs font-semibold">Download</button>
-      {isSupplier && <button disabled={busy} onClick={()=>{if(window.confirm('Delete this document? The accreditation will require re-review.'))void execute(()=>deleteAccreditation(doc.id));}} className="rounded border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700">Delete</button>}</div>
+      {isSupplier && <button disabled={busy} onClick={async()=>{if(await confirmAction({title:'Delete accreditation document',message:`Delete ${doc.fileName}? The accreditation will require re-review.`,tone:'danger',confirmText:'Delete document'}))void execute(()=>deleteAccreditation(doc.id));}} className="rounded border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700">Delete</button>}</div>
     </div>)}</div>;
   }
   return <div className="space-y-5">

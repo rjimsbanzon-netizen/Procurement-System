@@ -4,7 +4,7 @@ import { renderFinalizeAgreementModal } from './agreement';
 import { renderInitiateAmendmentModal } from './amendment';
 import { renderSubmitBidModal } from './bid';
 import { renderInspectDeliveryModal, renderRecordDeliveryModal } from './delivery';
-import { renderCancelProposalMeetingModal, renderScheduleMeetingModal } from './meeting';
+import { renderCancelProposalMeetingModal, renderRequestMeetingRescheduleModal, renderReviewMeetingRescheduleModal, renderRescheduleMeetingModal, renderScheduleMeetingModal } from './meeting';
 import { renderProcessPaymentModal } from './payment';
 import { renderRateSupplierModal, renderViewRatingsModal } from './rating';
 import { renderCreatePRModal } from './requisition';
@@ -27,6 +27,9 @@ export function renderModalContainer() {
         case 'create_stock_need': return renderCreateStockNeedModal();
         case 'submit_bid': return renderSubmitBidModal();
         case 'schedule_meeting': return renderScheduleMeetingModal();
+        case 'reschedule_meeting': return renderRescheduleMeetingModal();
+        case 'request_meeting_reschedule': return renderRequestMeetingRescheduleModal();
+        case 'review_meeting_reschedule': return renderReviewMeetingRescheduleModal();
         case 'cancel_meeting': return renderCancelProposalMeetingModal();
         case 'finalize_agreement': return renderFinalizeAgreementModal();
         default: return '';

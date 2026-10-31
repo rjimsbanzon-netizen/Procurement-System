@@ -111,12 +111,16 @@ function historyFromAudit(state: ProcurementState, user: User): ProcurementNotif
     'PR Approved': { title: 'Requisition approved', tab: 'requisitions', kind: 'success', category: 'pr' },
     'PR Rejected': { title: 'Requisition rejected', tab: 'requisitions', kind: 'warning', category: 'pr' },
     'Stock Need Published': { title: 'Stock need published', tab: 'bidding', kind: 'info', category: 'need' },
-    'Bid Submitted': { title: 'Supplier bid submitted', tab: 'bidding', kind: 'info', category: 'need' },
-    'Supplier Selected': { title: 'Supplier selected', tab: 'bidding', kind: 'success', category: 'need' },
-    'Supplier Bid Evaluated': { title: 'Bid evaluation recorded', tab: 'bidding', kind: 'info', category: 'bid' },
-    'Proposal Meeting Scheduled': { title: 'Proposal meeting scheduled', tab: 'bidding', kind: 'info', category: 'meeting' },
-    'Proposal Meeting Cancelled': { title: 'Proposal meeting cancelled', tab: 'bidding', kind: 'warning', category: 'meeting' },
-    'Meeting Response': { title: 'Meeting response received', tab: 'bidding', kind: 'info', category: 'meeting' },
+    'Bid Submitted': { title: 'Supplier bid submitted', tab: supplier ? 'bidding' : 'bid_comparison', kind: 'info', category: 'need' },
+    'Supplier Selected': { title: 'Supplier selected', tab: supplier ? 'bidding' : 'bid_comparison', kind: 'success', category: 'need' },
+    'Supplier Bid Evaluated': { title: 'Bid evaluation recorded', tab: 'bid_evaluation', kind: 'info', category: 'bid' },
+    'Proposal Meeting Scheduled': { title: 'Proposal meeting scheduled', tab: 'proposal_meetings', kind: 'info', category: 'meeting' },
+    'Proposal Meeting Rescheduled': { title: 'Proposal meeting rescheduled', tab: 'proposal_meetings', kind: 'warning', category: 'meeting' },
+    'Meeting Reschedule Requested': { title: 'Supplier requested a meeting change', tab: 'proposal_meetings', kind: 'action', category: 'meeting' },
+    'Meeting Reschedule Approved': { title: 'Meeting change approved', tab: 'proposal_meetings', kind: 'success', category: 'meeting' },
+    'Meeting Reschedule Rejected': { title: 'Meeting change declined', tab: 'proposal_meetings', kind: 'warning', category: 'meeting' },
+    'Proposal Meeting Cancelled': { title: 'Proposal meeting cancelled', tab: 'proposal_meetings', kind: 'warning', category: 'meeting' },
+    'Meeting Response': { title: 'Meeting response received', tab: 'proposal_meetings', kind: 'info', category: 'meeting' },
     'PO Issued': { title: 'Purchase order issued', tab: 'orders', kind: 'info', category: 'po' },
     'PO Signed by Supplier': { title: 'Purchase order signed', tab: 'orders', kind: 'success', category: 'po' },
     'Delivery Recorded': { title: 'Delivery recorded', tab: 'delivery', kind: 'info', category: 'delivery' },
@@ -232,12 +236,20 @@ export function getNotifications(state: ProcurementState = DB, user: User | null
         createdAt: asString(pr.createdAt), kind: 'action', targetTab: 'requisitions', targetRecordId: pr.id
       });
     });
+    state.proposalMeetings.filter(m => m.rescheduleRequest?.status === 'Pending').forEach(m => {
+      add({
+        id: `meeting-reschedule-review:${m.id}:${asString(m.rescheduleRequest.requestedAt)}`,
+        title: 'Supplier requested a new meeting time',
+        description: `${m.id} · ${asString(m.supplierName)} proposed ${asString(m.rescheduleRequest.date)} at ${asString(m.rescheduleRequest.time)}.`,
+        createdAt: asString(m.rescheduleRequest.requestedAt), kind: 'action', targetTab: 'proposal_meetings', targetRecordId: m.id
+      });
+    });
     state.bids.filter(bid => bid.status === 'Submitted').forEach(bid => {
       add({
         id: `bid-submitted:${bid.id}`,
         title: 'New supplier quotation',
         description: `${asString(bid.supplierName)} submitted bid ${bid.id}.`,
-        createdAt: asString(bid.submittedAt), kind: 'action', targetTab: 'bidding', targetRecordId: bid.id
+        createdAt: asString(bid.submittedAt), kind: 'action', targetTab: 'bid_comparison', targetRecordId: bid.id
       });
     });
   }
@@ -254,10 +266,21 @@ export function getNotifications(state: ProcurementState = DB, user: User | null
     });
     state.proposalMeetings.filter(meeting => Boolean(supplierId) && meeting.supplierId === supplierId && meeting.status === 'Pending Response').forEach(meeting => {
       add({
-        id: `meeting-invitation:${meeting.id}`,
-        title: 'Proposal meeting invitation',
-        description: `Respond to meeting ${meeting.id} with procurement.`,
-        createdAt: asString(meeting.createdAt || meeting.date), kind: 'action', targetTab: 'bidding', targetRecordId: meeting.id
+        id: `meeting-invitation:${meeting.id}:${meeting.rescheduleCount || 0}`,
+        title: meeting.rescheduleCount ? 'Updated meeting invitation' : 'Proposal meeting invitation',
+        description: `Respond to meeting ${meeting.id} with procurement · ${asString(meeting.date)} at ${asString(meeting.time)}.`,
+        createdAt: asString(meeting.rescheduledAt || meeting.createdAt || meeting.date), kind: 'action', targetTab: 'proposal_meetings', targetRecordId: meeting.id
+      });
+    });
+    state.proposalMeetings.filter(m => Boolean(supplierId) && m.supplierId === supplierId &&
+      ['Approved', 'Rejected'].includes(asString(m.rescheduleRequest?.status))).forEach(m => {
+      add({
+        id: `supplier-reschedule-decision:${m.id}:${asString(m.rescheduleRequest.requestedAt)}:${asString(m.rescheduleRequest.status)}`,
+        title: m.rescheduleRequest.status === 'Approved' ? 'Your new meeting time was approved' : 'Your schedule request was declined',
+        description: `${m.id} · ${m.rescheduleRequest.status === 'Approved' ? 'Confirm the revised invitation.' : 'The original meeting schedule remains unchanged.'}`,
+        createdAt: asString(m.rescheduleRequest.reviewedAt),
+        kind: m.rescheduleRequest.status === 'Approved' ? 'action' : 'warning',
+        targetTab: 'proposal_meetings', targetRecordId: m.id
       });
     });
     state.orders.filter(order => Boolean(supplierId) && order.supplierId === supplierId).forEach(order => {

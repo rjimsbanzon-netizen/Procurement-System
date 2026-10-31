@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { confirmAction } from '../services/actionDialogs';
 import { renderApp } from '../core/renderBridge';
 import { CLOUD_API_BASE } from '../services/cloud';
 import { financeAPI } from '../services/finance';
@@ -24,7 +25,7 @@ export function openRecordDeliveryModal(poId) {
 }
 
 
-export function acceptPurchaseOrder(poId) {
+export async function acceptPurchaseOrder(poId) {
     const order = DB.orders.find(item => item.id === poId);
     if (DB.currentUser.role !== 'Supplier' || !order ||
         order.supplierId !== DB.currentUser.supplierId ||
@@ -32,7 +33,7 @@ export function acceptPurchaseOrder(poId) {
         showToast('This Purchase Order is not awaiting acceptance for your supplier account.', 'error');
         return;
     }
-    if (!confirm(`By confirming, you accept and sign Purchase Order ${order.id} for ${order.quantity} ${order.itemTitle} at ₱${order.totalCost.toLocaleString()}.`)) return;
+    if (!await confirmAction({title:'Sign and accept Purchase Order',message:`By confirming, you accept and sign Purchase Order ${order.id} for ${order.quantity} ${order.itemTitle} at ₱${order.totalCost.toLocaleString()}.`,confirmText:'Accept & sign PO'})) return;
 
     order.status = 'Approved & Signed';
     order.signedBy = DB.currentUser.name;

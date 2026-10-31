@@ -751,6 +751,10 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     // D1 batch is transactional. Never reset only the JSON while keeping old
     // approval/invoice rows (the source of the orphan records in the screenshots).
     await env.DB.batch([
+      env.DB.prepare('DELETE FROM delivery_discrepancy_events'),
+      env.DB.prepare('DELETE FROM delivery_discrepancies'),
+      env.DB.prepare('DELETE FROM verified_inventory_movements'),
+      env.DB.prepare('DELETE FROM verified_inventory_receipts'),
       env.DB.prepare('DELETE FROM supplier_invoices'),
       env.DB.prepare('DELETE FROM pr_approval_steps'),
       env.DB.prepare('DELETE FROM pr_approval_requests'),

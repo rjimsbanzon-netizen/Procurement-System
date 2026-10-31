@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { confirmAction } from '../services/actionDialogs';
 import type { FormEvent } from 'react';
 import { DB } from '../store/state';
 import { CLOUD_API_BASE } from '../services/cloud';
@@ -45,7 +46,7 @@ export default function DocumentsPage() {
   };
 
   const remove = async (doc: ProcurementDocument) => {
-    if (!window.confirm(`Delete ${doc.fileName}? This cannot be undone.`)) return;
+    if (!await confirmAction({title:'Delete attached document',message:`Delete ${doc.fileName}? This cannot be undone.`,tone:'danger',confirmText:'Delete document'})) return;
     setLoading(true); setError(''); setMessage('');
     try { await deleteDocument(doc); setDocuments(await listDocuments(entityType, recordId)); setMessage('Document removed.'); }
     catch (e) { setError(e instanceof Error ? e.message : 'Delete failed.'); }

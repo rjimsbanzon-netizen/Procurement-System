@@ -55,6 +55,45 @@ async function accreditationFor(env: Env, userId: string) {
   return { supplierUserId:userId, status: accreditedStatus(acct, docs, today), reviewNote:acct?.review_note || '', reviewedAt:acct?.reviewed_at || null, documents:docs.map(d=>({id:d.id,category:d.category,fileName:d.file_name,size:d.size,validUntil:d.valid_until,uploadedAt:d.uploaded_at})), missing:requiredAccreditation.filter(cat=>!docs.some(d=>d.category===cat && d.valid_until>=today)) };
 }
 const validDate = (value:string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value+'T00:00:00Z')) && new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+/** Original meeting and purchase order stay independent; only the selected/awarded supplier participates. */
+function eligibleMeeting(data: Snapshot, target: Row): boolean {
+  const bid = (data.bids || []).find(b => b.id === target.bidId);
+  const need = (data.stockNeeds || []).find(n => n.id === target.needId);
+  if (!bid || !need || bid.needId !== need.id || bid.supplierId !== target.supplierId) return false;
+  return (bid.status === 'Selected' && need.selectedBidId === bid.id) ||
+    (data.orders || []).some(o => o.bidId === bid.id && o.supplierId === target.supplierId);
+}
+function meetingMatches(expected: Row | undefined, target: Row): boolean {
+  return Boolean(expected && expected.date === target.date && expected.time === target.time &&
+    expected.status === target.status && Number(expected.rescheduleCount || 0) === Number(target.rescheduleCount || 0));
+}
+function scheduleConflict(meetings: Row[], id: string, date: string, time: string, duration: number): Row | undefined {
+  const slotMinute = (d: string, t: string) => Date.parse(`${d}T${t}:00Z`) / 60000;
+  const proposedAt = slotMinute(date, time);
+  return meetings.find(m => m.id !== id && ['Pending Response', 'Agreed'].includes(m.status) &&
+    validDate(safe(m.date)) && /^([01]\d|2[0-3]):[0-5]\d$/.test(safe(m.time)) &&
+    proposedAt < slotMinute(m.date, m.time) + (Number.isInteger(Number(m.durationMinutes)) && Number(m.durationMinutes) >= 15 && Number(m.durationMinutes) <= 480 ? Number(m.durationMinutes) : 60) &&
+    slotMinute(m.date, m.time) < proposedAt + duration);
+}
+function validFutureSlot(date: unknown, time: unknown): boolean {
+  return validDate(safe(date)) && /^([01]\d|2[0-3]):[0-5]\d$/.test(safe(time)) &&
+    Number.isFinite(Date.parse(`${date}T${time}:00+08:00`)) && Date.parse(`${date}T${time}:00+08:00`) > Date.now();
+}
+async function commitMeeting(env: Env, old: {data:Snapshot;raw:string}, meetingId: string, replacement:Row,
+    user:User, action:string, description:string, cors:HeadersInit): Promise<Response> {
+  const when = new Date().toISOString();
+  const data: Snapshot = {...old.data, proposalMeetings:(old.data.proposalMeetings || []).map(m => m.id === meetingId ? replacement : m)};
+  const logs = Array.isArray(data.auditLogs) ? data.auditLogs : [];
+  data.auditLogs = [{id:`log-${crypto.randomUUID()}`,timestamp:when.replace('T',' ').slice(0,16),
+    user:user.name,role:user.app_role || (user.role === 'admin' ? 'Admin' : 'Supplier'),
+    action,details:description},...logs];
+  const updated = JSON.stringify(data);
+  if (updated.length > 1000000) return j({error:'Workspace too large.'},413,cors);
+  const result = await env.DB.prepare("UPDATE enterprise_state SET data=?, updated_at=datetime('now') WHERE id=1 AND data=?")
+    .bind(updated,old.raw).run();
+  if (result.meta.changes !== 1) return j({error:'Another user changed the workspace. Refresh and try again.'},409,cors);
+  return j({ok:true,meeting:replacement},200,cors);
+}
 const types = new Map([['application/pdf','.pdf'],['image/png','.png'],['image/jpeg','.jpg'],['application/vnd.openxmlformats-officedocument.wordprocessingml.document','.docx']]);
 const validText = (v: unknown, min: number, max: number) => typeof v==='string' && v.trim().length>=min && v.trim().length<=max;
 const choice = (v: unknown, list: string[]) => typeof v==='string' && list.includes(v);
@@ -107,6 +146,27 @@ export function validateSourcingSnapshotWrite(input: Record<string, unknown>, pr
       return 'Only Admin or Procurement Head may change bid selection status.';
     }
   }
+  const incomingMeetings = Array.isArray(input.proposalMeetings) ? input.proposalMeetings as Row[] : [];
+  const previousMeetings = Array.isArray(previous.proposalMeetings) ? previous.proposalMeetings as Row[] : [];
+  const meetingById = new Map(previousMeetings.map(m => [String(m.id),m]));
+  const incomingMeetingIds = new Set(incomingMeetings.map(m => String(m.id)));
+  if (!isFullReset && previousMeetings.some(m => !incomingMeetingIds.has(String(m.id))))
+    return 'Existing proposal meetings cannot be silently removed. Refresh the workspace before saving.';
+  for (const proposed of incomingMeetings) {
+    const existing = meetingById.get(String(proposed.id));
+    if (!existing) {
+      if (!adminOrHead(user)) return 'Only Procurement Head or Admin may create proposal meetings.';
+      continue; // Preserve the existing authorized new-invitation flow.
+    }
+    for (const field of ['date','time','durationMinutes','meetingMode','venue','notes','rescheduleRequest',
+        'rescheduleCount','rescheduleHistory','rescheduleReason','rescheduledBy','rescheduledAt']) {
+      // Existing meeting schedules are now owned by the secured meeting endpoints.
+      if (JSON.stringify(proposed[field] ?? null) !== JSON.stringify(existing[field] ?? null))
+        return 'Use the secured meeting reschedule workflow instead of saving meeting changes directly.';
+    }
+    if (existing.rescheduleRequest?.status === 'Pending' && proposed.status !== existing.status)
+      return 'Review the pending supplier schedule request before changing the meeting response.';
+  }
   return null;
 }
 
@@ -114,6 +174,157 @@ export async function handleSourcingRoutes(request:Request, env:Env, user:User, 
   const url = new URL(request.url), path = url.pathname, method = request.method;
   if (!path.startsWith('/sourcing/')) return null;
   const fail = (message:string, code=400) => j({error:message},code,cors);
+
+  // Authenticated rescheduling: server owns the source of truth, enforces
+  // overlap checks, and atomically preserves the existing meeting reference.
+  const rescheduleMatch = path.match(/^\/sourcing\/meetings\/([^/]+)\/reschedule$/);
+  if (rescheduleMatch && method === 'POST') {
+    if (!adminOrHead(user)) return fail('Only Admin or Procurement Head may reschedule meetings.', 403);
+    let meetingId = '';
+    try { meetingId = decodeURIComponent(rescheduleMatch[1]); } catch { return fail('Invalid meeting reference.'); }
+    const body = (await request.json().catch(() => null)) as Row | null;
+    if (!body || !validDate(safe(body.date)) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(safe(body.time)) ||
+        ![30, 60, 90, 120].includes(body.durationMinutes) || !choice(body.meetingMode, ['Online', 'Face-to-face']) ||
+        !validText(body.venue, 1, 500) || !validText(body.notes, 0, 1000) || !validText(body.reason, 5, 500)) {
+      return fail('Provide a valid future date/time, duration, format, venue, agenda, and rescheduling reason.');
+    }
+    // ProcureFlow's calendar uses Philippine local time (UTC+08:00).
+    const start = Date.parse(`${body.date}T${body.time}:00+08:00`);
+    if (!Number.isFinite(start) || start <= Date.now()) return fail('Choose a future meeting date and time.');
+    const old = await snapshot(env);
+    if (!old.raw) return fail('Meeting workspace not found.', 404);
+    const records = old.data.proposalMeetings || [];
+    const target = records.find(m => m.id === meetingId);
+    if (!target) return fail('Meeting reference not found. Refresh the page.', 404);
+    if (!['Pending Response', 'Agreed', 'Declined'].includes(target.status)) return fail('This meeting can no longer be rescheduled.', 409);
+    if (target.rescheduleRequest?.status === 'Pending') return fail('Review the supplier request before changing this meeting.', 409);
+    const bid = (old.data.bids || []).find(b => b.id === target.bidId);
+    const need = (old.data.stockNeeds || []).find(n => n.id === target.needId);
+    const linked = bid && need && bid.needId === need.id && bid.supplierId === target.supplierId;
+    const awarded = linked && (old.data.orders || []).some(o => o.bidId === bid.id && o.supplierId === target.supplierId);
+    const selected = linked && bid.status === 'Selected' && need.selectedBidId === bid.id;
+    if (!selected && !awarded) {
+      return fail('This meeting is not linked to the selected or awarded supplier.', 409);
+    }
+    // Do not alter an existing purchase order. Rescheduling changes only the
+    // invitation and supplier response, not order acceptance, delivery or payment.
+    const expected = body.expected as Row | undefined;
+    if (!expected || expected.date !== target.date || expected.time !== target.time ||
+        expected.status !== target.status || Number(expected.rescheduleCount || 0) !== Number(target.rescheduleCount || 0)) {
+      return fail('Another user has updated this meeting. Refresh before rescheduling.', 409);
+    }
+    const slotMinute = (date: string, time: string) => Date.parse(`${date}T${time}:00Z`) / 60000;
+    const proposedAt = slotMinute(body.date, body.time);
+    const conflicting = records.find(m => m.id !== meetingId && ['Pending Response', 'Agreed'].includes(m.status) &&
+      validDate(safe(m.date)) && /^([01]\d|2[0-3]):[0-5]\d$/.test(safe(m.time)) &&
+      proposedAt < slotMinute(m.date, m.time) + (Number.isInteger(Number(m.durationMinutes)) && Number(m.durationMinutes) >= 15 && Number(m.durationMinutes) <= 480 ? Number(m.durationMinutes) : 60) &&
+      slotMinute(m.date, m.time) < proposedAt + body.durationMinutes);
+    if (conflicting) return fail(`Overlapping schedule: ${safe(conflicting.id)} with ${safe(conflicting.supplierName)} on ${safe(conflicting.date)} at ${safe(conflicting.time)}. Select another slot.`, 409);
+    if (target.date === body.date && target.time === body.time && Number(target.durationMinutes || 60) === body.durationMinutes &&
+        target.meetingMode === body.meetingMode && target.venue === body.venue.trim() && (target.notes || '') === body.notes.trim()) {
+      return fail('Change at least one meeting detail before rescheduling.');
+    }
+    const when = new Date().toISOString();
+    const previous = { date:target.date, time:target.time, durationMinutes:target.durationMinutes || 60,
+      meetingMode:target.meetingMode, venue:target.venue, notes:target.notes, status:target.status,
+      reason:body.reason.trim(), changedAt:when, changedBy:user.name };
+    const replacement = {
+      ...target, date:body.date, time:body.time, durationMinutes:body.durationMinutes,
+      meetingMode:body.meetingMode, venue:body.venue.trim(), notes:body.notes.trim(),
+      status:'Pending Response', rescheduleReason:body.reason.trim(),
+      rescheduledAt:when, rescheduledBy:user.name,
+      rescheduleCount:Number(target.rescheduleCount || 0) + 1,
+      rescheduleHistory:[...(Array.isArray(target.rescheduleHistory) ? target.rescheduleHistory : []), previous]
+    };
+    const data: Snapshot = { ...old.data, proposalMeetings:records.map(m => m.id === meetingId ? replacement : m) };
+    const newLogs = Array.isArray(data.auditLogs) ? data.auditLogs : [];
+    data.auditLogs = [{ id:`log-${crypto.randomUUID()}`, timestamp:when.replace('T',' ').slice(0,16),
+      user:user.name, role:user.app_role || (user.role === 'admin' ? 'Admin' : 'Procurement Head'),
+      action:'Proposal Meeting Rescheduled',
+      details:`Meeting ${meetingId} with ${safe(target.supplierName)} rescheduled to ${body.date} at ${body.time} (${body.durationMinutes} min). Reason: ${body.reason.trim()}` }, ...newLogs];
+    const updated = JSON.stringify(data);
+    if (updated.length > 1000000) return fail('Workspace too large.', 413);
+    const result = await env.DB.prepare("UPDATE enterprise_state SET data=?, updated_at=datetime('now') WHERE id=1 AND data=?")
+      .bind(updated, old.raw).run();
+    if (result.meta.changes !== 1) return fail('Another user changed the workspace. Refresh and try again.', 409);
+    return j({ ok:true, meeting:replacement }, 200, cors);
+  }
+
+  // Suppliers request a new time; this does not alter the booked meeting.
+  const requestMatch = path.match(/^\/sourcing\/meetings\/([^/]+)\/reschedule-request$/);
+  if (requestMatch && method === 'POST') {
+    if (!isSupplier(user)) return fail('Only the invited supplier may request a meeting change.', 403);
+    let id = '';
+    try { id = decodeURIComponent(requestMatch[1]); } catch { return fail('Invalid meeting reference.'); }
+    const body = (await request.json().catch(() => null)) as Row | null;
+    if (!body || !validFutureSlot(body.date,body.time) || ![30,60,90,120].includes(body.durationMinutes) ||
+        !validText(body.reason,5,500)) return fail('Enter a future date, time, duration, and a reason (5–500 characters).');
+    const old = await snapshot(env);
+    if (!old.raw) return fail('Meeting workspace not found.', 404);
+    const meetings = old.data.proposalMeetings || [];
+    const target = meetings.find(m => m.id === id);
+    if (!target) return fail('Meeting not found.', 404);
+    const own = supplierKey(old.data,user);
+    if (target.supplierId !== own.id && lower(target.supplierName) !== lower(own.name))
+      return fail("You cannot modify another supplier\'s meeting.",403);
+    if (!['Pending Response','Agreed','Declined'].includes(target.status) || !eligibleMeeting(old.data,target))
+      return fail('This meeting is no longer eligible for rescheduling.',409);
+    if (target.rescheduleRequest?.status === 'Pending') return fail('Your existing schedule request is awaiting procurement review.',409);
+    if (!meetingMatches(body.expected,target)) return fail('The meeting changed. Refresh the page before requesting again.',409);
+    if (target.date === body.date && target.time === body.time &&
+        Number(target.durationMinutes || 60) === body.durationMinutes) return fail('Propose a different meeting time or duration.');
+    if (scheduleConflict(meetings,id,body.date,body.time,body.durationMinutes))
+      return fail('The proposed time is unavailable. Please select a different time.',409);
+    const when = new Date().toISOString();
+    const requestData = {date:body.date,time:body.time,durationMinutes:body.durationMinutes,
+      reason:body.reason.trim(),requestedBy:user.name,requestedAt:when,status:'Pending'};
+    const replacement = {...target,rescheduleRequest:requestData};
+    return commitMeeting(env,old,id,replacement,user,'Meeting Reschedule Requested',
+      `Supplier ${safe(target.supplierName)} requested ${id} be moved to ${body.date} ${body.time}.`,cors);
+  }
+
+  // Procurement managers decide on a supplier's request. Approval changes the existing meeting,
+  // but the supplier must accept the resulting revised invitation.
+  const decisionMatch = path.match(/^\/sourcing\/meetings\/([^/]+)\/reschedule-request\/decision$/);
+  if (decisionMatch && method === 'POST') {
+    if (!adminOrHead(user)) return fail('Only Admin or Procurement Head may review schedule requests.',403);
+    let id = '';
+    try { id = decodeURIComponent(decisionMatch[1]); } catch { return fail('Invalid meeting reference.'); }
+    const body = (await request.json().catch(() => null)) as Row | null;
+    if (!body || !choice(body.decision,['Approve','Reject']) || !validText(body.note,0,500))
+      return fail('Select Approve or Reject and provide a valid review note.');
+    const old = await snapshot(env);
+    if (!old.raw) return fail('Meeting workspace not found.',404);
+    const meetings = old.data.proposalMeetings || [];
+    const target = meetings.find(m => m.id === id);
+    if (!target) return fail('Meeting not found.',404);
+    const requested = target.rescheduleRequest;
+    if (!requested || requested.status !== 'Pending' ||
+        !['Pending Response','Agreed','Declined'].includes(target.status) ||
+        !eligibleMeeting(old.data,target)) return fail('No eligible reschedule request remains for this meeting.',409);
+    if (!meetingMatches(body.expected,target) || body.expected.requestedAt !== requested.requestedAt)
+      return fail('This request has changed. Refresh before reviewing.',409);
+    const when = new Date().toISOString();
+    const reviewed = {...requested,status:body.decision === 'Approve' ? 'Approved' : 'Rejected',
+      reviewedAt:when,reviewedBy:user.name,reviewNote:body.note.trim()};
+    if (body.decision === 'Reject') {
+      return commitMeeting(env,old,id,{...target,rescheduleRequest:reviewed},user,'Meeting Reschedule Rejected',
+        `Request to move ${id} from ${safe(target.supplierName)} declined.`,cors);
+    }
+    if (!validFutureSlot(requested.date,requested.time) || ![30,60,90,120].includes(requested.durationMinutes))
+      return fail("The supplier\'s proposed date/time is no longer valid. Decline this request and ask for another.",409);
+    const conflict = scheduleConflict(meetings,id,requested.date,requested.time,requested.durationMinutes);
+    if (conflict) return fail(`The requested time now overlaps ${safe(conflict.id)} (${safe(conflict.date)} at ${safe(conflict.time)}). Decline or choose another time.`,409);
+    const previous = {date:target.date,time:target.time,durationMinutes:target.durationMinutes || 60,
+      meetingMode:target.meetingMode,venue:target.venue,notes:target.notes,status:target.status,
+      reason:requested.reason,changedAt:when,changedBy:user.name};
+    const replacement = {...target,date:requested.date,time:requested.time,durationMinutes:requested.durationMinutes,
+      status:'Pending Response',rescheduleRequest:reviewed,rescheduleReason:requested.reason,
+      rescheduledBy:user.name,rescheduledAt:when,rescheduleCount:Number(target.rescheduleCount || 0) + 1,
+      rescheduleHistory:[...(Array.isArray(target.rescheduleHistory) ? target.rescheduleHistory : []),previous]};
+    return commitMeeting(env,old,id,replacement,user,'Meeting Reschedule Approved',
+      `Supplier request approved for ${id}; new meeting time ${requested.date} at ${requested.time}. Supplier confirmation required.`,cors);
+  }
 
   if (path === '/sourcing/deadlines' && method === 'GET') {
     const rows = (await env.DB.prepare('SELECT need_id,closes_at,manually_closed FROM sourcing_deadlines').all<Row>()).results;

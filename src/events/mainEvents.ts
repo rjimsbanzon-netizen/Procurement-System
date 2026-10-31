@@ -1,6 +1,7 @@
 // @ts-nocheck
+import { requestInput } from '../services/actionDialogs';
 import { respondToAmendment } from '../actions/amendmentActions';
-import { cancelProposalMeeting } from '../actions/biddingActions';
+import { cancelProposalMeeting, canRequestMeetingReschedule, canReviewMeetingReschedule, canRescheduleProposalMeeting } from '../actions/biddingActions';
 import { DEFAULT_MEETING_DURATION_MINUTES, escapeMeetingText, findMeetingConflicts, meetingDuration } from '../domain/meetingSchedule';
 import { closeModal } from '../actions/modalActions';
 import { renderApp } from '../core/renderBridge';
@@ -8,12 +9,11 @@ import { financeAPI } from '../services/finance';
 import { canManageBidding, canManageDeliveryIssues, getAgreementFinalizationError, hasPermission } from '../domain/permissions';
 import { getAvailableRequisitions, getRemainingOrderQuantity, isOrderFullyVerified } from '../domain/procurement';
 import { logAudit } from '../services/audit';
-import { CLOUD_API_BASE, CLOUD_TOKEN_KEY, CLOUD_USERNAME_KEY, cloudRequest } from '../services/cloud';
+import { CLOUD_API_BASE, CLOUD_RECORD_COLLECTIONS, CLOUD_TOKEN_KEY, CLOUD_USERNAME_KEY, cloudRequest } from '../services/cloud';
 import { validateSupplierQuotationTerms, type SupplierQuotationTerms } from '../domain/bidTerms';
 import { Storage } from '../services/storage';
 import { showToast } from '../services/toast';
 import { DB, ui } from '../store/state';
-import { financeAPI } from '../services/finance';
 import { navigateTo } from '../core/renderBridge';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
@@ -51,9 +51,12 @@ export function attachMainEvents() {
                 showToast('Only the Administrator can reset procurement records.', 'error');
                 return;
             }
-            const confirmation = window.prompt(
-                'ADMIN ONLY: Clear requisitions, orders, approvals, supplier invoices, activity history, and old notification read receipts? User accounts, uploaded documents and Finance settings remain. This cannot be undone without a backup. Type RESET to confirm.'
-            );
+            const confirmation = await requestInput({
+                title: 'Reset Procurement Workspace',
+                message: 'ADMIN ONLY: Clear requisitions, orders, approvals, supplier invoices, activity history, and old notification read receipts? User accounts, uploaded documents and Finance settings remain. This cannot be undone without a backup.',
+                label: 'Type RESET to confirm', exactMatch: 'RESET', required: true,
+                tone: 'danger', confirmText: 'Reset workspace'
+            });
             if (confirmation === null) return;
             if (confirmation !== 'RESET') {
                 showToast('Reset cancelled: enter RESET exactly to confirm.', 'warning');
@@ -204,7 +207,8 @@ export function attachMainEvents() {
                     specs: order.specs,
                     orderedQty: order.quantity,
                     deliveredQty: qtyDelivered,
-                    expectedDate: delDate,
+                    // Expected date comes from the approved requisition / PO, never the actual delivery date.
+                    expectedDate: order.expectedDate || DB.requisitions.find(pr => pr.id === order.prId)?.targetDate || '',
                     actualDate: delDate,
                     deliveryStatus: qtyDelivered === remainingQty ? 'Delivered' : 'Partial',
                     complianceStatus: 'Pending Inspection',
@@ -243,6 +247,11 @@ export function attachMainEvents() {
 
                 logAudit('Delivery Inspected', `Delivery ${delivery.id} marked as ${inspectStatus}`);
                 Storage.save(DB);
+                if (CLOUD_API_BASE) {
+                    // Reconcile accepted stock after the delivery inspection is safely cloud-saved.
+                    void Storage.flush().then(() => cloudRequest('/operations/inventory/sync', { method: 'POST', body: '{}' }))
+                        .catch(error => showToast(`Inventory sync pending: ${error instanceof Error ? error.message : String(error)}`, 'warning'));
+                }
                 showToast(`Inspection outcome logged successfully!`, 'success');
                 closeModal();
             } else {
@@ -632,6 +641,258 @@ export function attachMainEvents() {
                 closeModal();
             } else {
                 showToast('The proposal meeting could not be scheduled. Verify supplier selection and meeting details.', 'error');
+            }
+        });
+    }
+
+    // Secured meeting endpoints already committed to the cloud; never overwrite the result with a stale PUT.
+    const refreshSecuredMeeting = async (meeting) => {
+        const index = DB.proposalMeetings.findIndex(m => m.id === meeting.id);
+        if (index >= 0) DB.proposalMeetings[index] = meeting;
+        try {
+            const snapshot = await cloudRequest('/enterprise-state');
+            if (snapshot?.data) {
+                CLOUD_RECORD_COLLECTIONS.forEach(key => {
+                    if (Array.isArray(snapshot.data[key])) DB[key] = snapshot.data[key];
+                });
+            }
+        } catch (error) {
+            console.warn('Meeting saved but workspace refresh could not complete.', error);
+        }
+        localStorage.setItem('eprocurement_db', JSON.stringify(DB));
+    };
+
+    // The invited supplier requests a different date/time. The current reservation stays unchanged.
+    const supplierRequestForm = document.getElementById('supplier-reschedule-request-form');
+    if (supplierRequestForm) {
+        let saving = false;
+        const meeting = DB.proposalMeetings.find(m => m.id === ui.selectedRecord);
+        const readSlot = () => ({
+            date: document.getElementById('supplier-reschedule-date').value,
+            time: document.getElementById('supplier-reschedule-time').value,
+            durationMinutes: Number(document.getElementById('supplier-reschedule-duration').value)
+        });
+        const checkSlot = () => {
+            const slot = readSlot();
+            const conflicts = slot.date && slot.time ? findMeetingConflicts(slot, DB.proposalMeetings, meeting?.id) : [];
+            const warning = document.getElementById('supplier-reschedule-conflict');
+            if (warning) {
+                warning.classList.toggle('hidden', !conflicts.length);
+                // Do not disclose other suppliers' meeting details to the requesting supplier.
+                warning.textContent = conflicts.length ? 'This time is already reserved. Please choose a different date, time, or duration.' : '';
+            }
+            const submit = document.getElementById('supplier-reschedule-submit');
+            if (submit) { submit.disabled = Boolean(conflicts.length) || saving; submit.classList.toggle('opacity-50', Boolean(conflicts.length) || saving); }
+            return conflicts.length;
+        };
+        ['supplier-reschedule-date','supplier-reschedule-time','supplier-reschedule-duration'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', checkSlot);
+            document.getElementById(id)?.addEventListener('change', checkSlot);
+        });
+        checkSlot();
+        supplierRequestForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            if (saving || !meeting || !canRequestMeetingReschedule(meeting.id)) return;
+            const {date,time,durationMinutes} = readSlot();
+            const reason = document.getElementById('supplier-reschedule-reason').value.trim();
+            if (checkSlot()) { showToast('Choose an available meeting time.', 'warning'); return; }
+            if (!date || !time || !Number.isFinite(Date.parse(`${date}T${time}:00+08:00`)) ||
+                Date.parse(`${date}T${time}:00+08:00`) <= Date.now()) {
+                showToast('Select a valid future Philippine date and time.', 'warning'); return;
+            }
+            if (![30,60,90,120].includes(durationMinutes) || reason.length < 5 || reason.length > 500) {
+                showToast('Choose a valid duration and enter a reason (5–500 characters).', 'error'); return;
+            }
+            if (meeting.date === date && meeting.time === time && meetingDuration(meeting.durationMinutes) === durationMinutes) {
+                showToast('Propose a different date, time or duration.', 'warning'); return;
+            }
+            const payload = {date,time,durationMinutes,reason,
+                expected: {date:meeting.date,time:meeting.time,status:meeting.status,rescheduleCount:meeting.rescheduleCount || 0}};
+            saving = true;
+            checkSlot();
+            try {
+                if (CLOUD_API_BASE) {
+                    if (!localStorage.getItem(CLOUD_TOKEN_KEY)) throw new Error('Please sign in to send a schedule request.');
+                    await Storage.flush();
+                    const result = await cloudRequest(`/sourcing/meetings/${encodeURIComponent(meeting.id)}/reschedule-request`,
+                        {method:'POST',body:JSON.stringify(payload)});
+                    if (!result.meeting) throw new Error('The cloud did not confirm this request.');
+                    await refreshSecuredMeeting(result.meeting);
+                } else {
+                    const requestedAt = new Date().toISOString();
+                    meeting.rescheduleRequest = {date,time,durationMinutes,reason,requestedBy:DB.currentUser.name,requestedAt,status:'Pending'};
+                    logAudit('Meeting Reschedule Requested', `Supplier requested rescheduling ${meeting.id} to ${date} at ${time}.`);
+                    Storage.save(DB);
+                }
+                showToast(`Rescheduling request sent for ${meeting.id}. Await Procurement approval.`, 'success');
+                closeModal();
+            } catch (error) {
+                showToast(error instanceof Error ? error.message : 'Could not submit the schedule change request.', 'error');
+            } finally { saving = false; checkSlot(); }
+        });
+    }
+
+    // Admin/Procurement Head either approve the proposed slot or decline the request.
+    const reviewRequestForm = document.getElementById('review-meeting-reschedule-form');
+    if (reviewRequestForm) {
+        let saving = false;
+        reviewRequestForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            if (saving) return;
+            const decision = e.submitter?.value;
+            const note = document.getElementById('review-reschedule-note').value.trim();
+            const meeting = DB.proposalMeetings.find(m => m.id === ui.selectedRecord);
+            if (!['Approve','Reject'].includes(decision) || !meeting || !canReviewMeetingReschedule(meeting.id)) {
+                showToast('This supplier request is no longer awaiting review.', 'error'); return;
+            }
+            if (note.length > 500) { showToast('The decision note must be 500 characters or fewer.', 'error'); return; }
+            const request = meeting.rescheduleRequest;
+            if (decision === 'Approve' && findMeetingConflicts({date:request.date,time:request.time,
+                    durationMinutes:request.durationMinutes},DB.proposalMeetings,meeting.id).length) {
+                showToast('The proposed time now conflicts with another meeting. Decline the request or resolve the conflict.', 'warning'); return;
+            }
+            const payload = {decision,note,expected:{date:meeting.date,time:meeting.time,status:meeting.status,
+                rescheduleCount:meeting.rescheduleCount || 0,requestedAt:request.requestedAt}};
+            saving = true;
+            const buttons = reviewRequestForm.querySelectorAll('[type="submit"]');
+            buttons.forEach(button => button.disabled = true);
+            try {
+                if (CLOUD_API_BASE) {
+                    if (!localStorage.getItem(CLOUD_TOKEN_KEY)) throw new Error('Please sign in to review the schedule request.');
+                    await Storage.flush();
+                    const result = await cloudRequest(`/sourcing/meetings/${encodeURIComponent(meeting.id)}/reschedule-request/decision`,
+                        {method:'POST',body:JSON.stringify(payload)});
+                    if (!result.meeting) throw new Error('The cloud did not confirm this decision.');
+                    await refreshSecuredMeeting(result.meeting);
+                } else {
+                    const reviewedAt = new Date().toISOString();
+                    meeting.rescheduleRequest = {...request,status:decision === 'Approve' ? 'Approved' : 'Rejected',
+                        reviewedBy:DB.currentUser.name,reviewedAt,reviewNote:note};
+                    if (decision === 'Approve') {
+                        const previous = {date:meeting.date,time:meeting.time,durationMinutes:meetingDuration(meeting.durationMinutes),
+                            meetingMode:meeting.meetingMode,venue:meeting.venue,notes:meeting.notes,status:meeting.status,
+                            reason:request.reason,changedAt:reviewedAt,changedBy:DB.currentUser.name};
+                        meeting.rescheduleHistory = [...(meeting.rescheduleHistory || []),previous];
+                        Object.assign(meeting,{date:request.date,time:request.time,durationMinutes:request.durationMinutes,
+                            status:'Pending Response',rescheduleReason:request.reason,rescheduledBy:DB.currentUser.name,
+                            rescheduledAt:reviewedAt,rescheduleCount:(meeting.rescheduleCount || 0)+1});
+                    }
+                    logAudit(decision === 'Approve' ? 'Meeting Reschedule Approved' : 'Meeting Reschedule Rejected',
+                        `${meeting.id}: ${decision} supplier reschedule request.`);
+                    Storage.save(DB);
+                }
+                showToast(decision === 'Approve' ? 'New schedule approved. Supplier confirmation is required.' :
+                    'Schedule request declined. Original meeting unchanged.', 'success');
+                closeModal();
+            } catch (error) {
+                showToast(error instanceof Error ? error.message : 'Could not save the decision.', 'error');
+            } finally { saving = false; buttons.forEach(button => button.disabled = false); }
+        });
+    }
+
+    // Rescheduling updates the existing meeting reference; supplier acceptance is reset.
+    const rescheduleForm = document.getElementById('reschedule-meeting-form');
+    if (rescheduleForm) {
+        const original = DB.proposalMeetings.find(meeting => meeting.id === ui.selectedRecord);
+        const readSlot = () => ({
+            date: document.getElementById('reschedule-date').value,
+            time: document.getElementById('reschedule-time').value,
+            durationMinutes: Number(document.getElementById('reschedule-duration').value)
+        });
+        const checkConflicts = () => {
+            const slot = readSlot();
+            const conflicts = slot.date && slot.time
+                ? findMeetingConflicts(slot, DB.proposalMeetings, original?.id) : [];
+            const warning = document.getElementById('reschedule-conflict-warning');
+            const submit = document.getElementById('reschedule-submit');
+            if (warning) {
+                warning.classList.toggle('hidden', conflicts.length === 0);
+                warning.innerHTML = conflicts.length ? `<div class="font-bold"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Meeting time overlaps an existing reservation</div><p class="mt-1">${conflicts.map(m => `${escapeMeetingText(m.id)} (${escapeMeetingText(m.supplierName)} — ${escapeMeetingText(m.date)} at ${escapeMeetingText(m.time)}, ${meetingDuration(m.durationMinutes)} minutes)`).join('; ')}</p><p class="mt-1">Choose a different date, start time, or duration.</p>` : '';
+            }
+            if (submit) {
+                submit.disabled = conflicts.length > 0;
+                submit.classList.toggle('opacity-50', conflicts.length > 0);
+            }
+            return conflicts;
+        };
+        ['reschedule-date', 'reschedule-time', 'reschedule-duration'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', checkConflicts);
+            document.getElementById(id)?.addEventListener('change', checkConflicts);
+        });
+        checkConflicts();
+        let isSubmitting = false;
+        rescheduleForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (isSubmitting || !original) return;
+            const { date, time, durationMinutes } = readSlot();
+            const meetingMode = document.getElementById('reschedule-mode').value;
+            const venue = document.getElementById('reschedule-venue').value.trim();
+            const notes = document.getElementById('reschedule-notes').value.trim();
+            const reason = document.getElementById('reschedule-reason').value.trim();
+            const current = DB.proposalMeetings.find(m => m.id === original.id);
+            if (!current || !canRescheduleProposalMeeting(current.id)) {
+                showToast('This meeting is no longer eligible for rescheduling.', 'error'); return;
+            }
+            if (checkConflicts().length) {
+                showToast('Choose a time that does not overlap another meeting.', 'warning'); return;
+            }
+            if (!date || !time || !Number.isFinite(new Date(`${date}T${time}:00`).getTime()) ||
+                new Date(`${date}T${time}:00`).getTime() <= Date.now()) {
+                showToast('Select a valid future meeting date and time.', 'warning'); return;
+            }
+            if (![30, 60, 90, 120].includes(durationMinutes) || !['Online', 'Face-to-face'].includes(meetingMode) ||
+                !venue || venue.length > 500 || notes.length > 1000 || reason.length < 5 || reason.length > 500) {
+                showToast('Please complete the meeting details and a reason (5–500 characters).', 'error'); return;
+            }
+            const hasChanged = date !== String(current.date) || time !== String(current.time) ||
+                durationMinutes !== meetingDuration(current.durationMinutes) || meetingMode !== current.meetingMode ||
+                venue !== String(current.venue || '') || notes !== String(current.notes || '');
+            if (!hasChanged) { showToast('Change at least one meeting detail before sending an updated invitation.', 'warning'); return; }
+            const payload = { date, time, durationMinutes, meetingMode, venue, notes, reason,
+                expected: { date: current.date, time: current.time, status: current.status, rescheduleCount: current.rescheduleCount || 0 } };
+            isSubmitting = true;
+            const submit = document.getElementById('reschedule-submit');
+            if (submit) { submit.disabled = true; submit.textContent = 'Saving updated schedule…'; }
+            try {
+                if (CLOUD_API_BASE) {
+                    if (!localStorage.getItem(CLOUD_TOKEN_KEY)) throw new Error('Please sign in again before rescheduling a meeting.');
+                    await Storage.flush();
+                    const result = await cloudRequest(`/sourcing/meetings/${encodeURIComponent(current.id)}/reschedule`, {
+                        method: 'POST', body: JSON.stringify(payload)
+                    });
+                    if (!result.meeting) throw new Error('The cloud did not confirm the meeting update.');
+                    const index = DB.proposalMeetings.findIndex(m => m.id === current.id);
+                    if (index !== -1) DB.proposalMeetings[index] = result.meeting;
+                    // Read canonical state. Never PUT the old snapshot back over the new meeting.
+                    try {
+                        const snapshot = await cloudRequest('/enterprise-state');
+                        if (snapshot?.data) {
+                            CLOUD_RECORD_COLLECTIONS.forEach(key => {
+                                if (Array.isArray(snapshot.data[key])) DB[key] = snapshot.data[key];
+                            });
+                        }
+                    } catch (refreshError) {
+                        console.warn('Meeting saved but full workspace refresh is unavailable.', refreshError);
+                    }
+                    localStorage.setItem('eprocurement_db', JSON.stringify(DB));
+                } else {
+                    const when = new Date().toISOString();
+                    const previous = { date: current.date, time: current.time, durationMinutes: meetingDuration(current.durationMinutes),
+                        meetingMode: current.meetingMode, venue: current.venue, notes: current.notes, status: current.status,
+                        reason, changedAt: when, changedBy: DB.currentUser.name };
+                    current.rescheduleHistory = [...(Array.isArray(current.rescheduleHistory) ? current.rescheduleHistory : []), previous];
+                    Object.assign(current, { date, time, durationMinutes, meetingMode, venue, notes, status: 'Pending Response',
+                        rescheduleReason: reason, rescheduledBy: DB.currentUser.name, rescheduledAt: when,
+                        rescheduleCount: (current.rescheduleCount || 0) + 1 });
+                    logAudit('Proposal Meeting Rescheduled', `Meeting ${current.id} with ${current.supplierName} rescheduled to ${date} at ${time} (${durationMinutes} minutes). Reason: ${reason}`);
+                }
+                showToast(`Meeting ${current.id} rescheduled. A new supplier confirmation is required.`, 'success');
+                closeModal();
+            } catch (error) {
+                showToast(error instanceof Error ? error.message : 'Could not save the updated meeting.', 'error');
+            } finally {
+                isSubmitting = false;
+                if (submit?.isConnected) { submit.textContent = 'Send Updated Invite'; checkConflicts(); }
             }
         });
     }

@@ -38,6 +38,9 @@ export function canAccessTab(tab) {
         case 'notifications': return true;
         case 'approvals': return !isSupplier;
         case 'budgets': return !isSupplier;
+        case 'reports': return !isSupplier;
+        case 'delivery_discrepancies': return true; // supplier only sees its own issues in D1
+        case 'inventory': return !isSupplier;
         case 'invoice_matching': return true;
         case 'supplier_messages': return isSupplier || ['Admin','Procurement Head','Procurement Officer'].includes(DB.currentUser.role);
         case 'accreditation': return isSupplier || ['Admin','Procurement Head'].includes(DB.currentUser.role);
@@ -46,6 +49,10 @@ export function canAccessTab(tab) {
         case 'pdf_generator': return true;
         case 'tracking': return isSupplier ? hasPermission('view_assigned_po') : hasPermission('create_pr') || hasPermission('approve_pr') || hasPermission('view_all_po');
         case 'bidding': return isSupplier ? hasPermission('submit_bids') : canManageBidding();
+        case 'proposal_meetings': return isSupplier ? hasPermission('submit_bids') : canManageBidding();
+        case 'bidding_deadlines':
+        case 'bid_comparison':
+        case 'bid_evaluation': return canManageBidding();
         case 'requisitions': return hasPermission('create_pr') || hasPermission('approve_pr');
         case 'orders': return hasPermission(isSupplier ? 'view_assigned_po' : 'view_all_po');
         case 'delivery':

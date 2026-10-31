@@ -1,4 +1,5 @@
 import {useCallback,useEffect,useState} from 'react';
+import { confirmAction, requestInput } from '../services/actionDialogs';
 import {financeAPI} from '../services/finance';
 import type {BudgetRow} from '../services/finance';
 import {DB} from '../store/state';
@@ -54,21 +55,21 @@ export default function BudgetsPage(){
     document.getElementById('budget-allocation-form')?.scrollIntoView({behavior:'smooth',block:'center'});
   }
 
-  function renameDepartment(oldName:string){
+  async function renameDepartment(oldName:string){
     if(busy||isReserved(oldName))return;
-    const newName=window.prompt(`Enter the new name for ${oldName}:`,oldName)?.trim();
+    const newName=await requestInput({title:'Rename Department',message:`Enter a new name for ${oldName}.`,label:'New department name',initialValue:oldName,required:true,confirmText:'Review rename'});
     if(!newName||newName===oldName)return;
-    if(!window.confirm(`Rename "${oldName}" to "${newName}"? Staff, department budget and Head assignments will be updated. Departments with existing procurement history cannot be renamed.`))return;
+    if(!await confirmAction({title:'Confirm department rename',message:`Rename "${oldName}" to "${newName}"? Staff, department budget and Head assignments will be updated. Departments with existing procurement history cannot be renamed.`,tone:'warning',confirmText:'Rename department'}))return;
     void save(async()=>{
       await financeAPI.renameDepartment(oldName,newName);
       setDepartment(previous=>previous===oldName?newName:previous);
     },`Department renamed from ${oldName} to ${newName}.`);
   }
 
-  function deleteDepartment(row:BudgetRow){
+  async function deleteDepartment(row:BudgetRow){
     if(busy||isReserved(row.department))return;
     const name=row.department;
-    if(!window.confirm(`Delete department "${name}"?\n\nThis is only possible if there are no associated staff members, assigned Department Head or procurement records, and its budget allocation is zero.\n\nThis cannot be undone.`))return;
+    if(!await confirmAction({title:'Delete unused department',message:`Delete department "${name}"?\n\nThis is only possible if there are no associated staff members, assigned Department Head or procurement records, and its budget allocation is zero.\n\nThis cannot be undone.`,tone:'danger',confirmText:'Delete department'}))return;
     void save(async()=>{
       await financeAPI.removeDepartment(name);
       setDepartment(previous=>previous===name?'':previous);

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { confirmAction } from '../services/actionDialogs';
 import type { ChangeEvent } from 'react';
 import { cloudRequest } from '../services/cloud';
 import { DB } from '../store/state';
@@ -66,7 +67,7 @@ export function RestoreMissingRecord({ kind, recordId, onRestored }: Props) {
 
   async function restore() {
     if (!record || busy) return;
-    if (!window.confirm(`Restore ${recordId} from ${source}? The server will verify its original approval / invoice references before restoring. No approvals will be bypassed.`)) return;
+    if (!await confirmAction({title:'Restore original procurement record',message:`Restore ${recordId} from ${source}? The server will verify its original approval / invoice references before restoring. No approvals will be bypassed.`,tone:'warning',confirmText:'Validate and restore'})) return;
     setBusy(true); setError(''); setSuccess('');
     try {
       await cloudRequest('/finance/admin/restore-record', {

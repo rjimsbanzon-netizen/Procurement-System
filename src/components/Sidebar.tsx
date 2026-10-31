@@ -33,7 +33,11 @@ const employeeSections: NavSection[] = [
   {
     title: 'Sourcing',
     items: [
-      ['bidding', 'Bidding & Proposals', 'fa-gavel'],
+      ['bidding', 'Stock Needs & Bidding', 'fa-box-open'],
+      ['bidding_deadlines', 'Bidding Deadlines', 'fa-hourglass-half'],
+      ['bid_comparison', 'Submitted Vendor Bids & Comparison', 'fa-scale-balanced'],
+      ['bid_evaluation', 'Supplier Bid Evaluation', 'fa-clipboard-check'],
+      ['proposal_meetings', 'Proposal Meetings', 'fa-calendar-days'],
       ['suppliers', 'Suppliers Directory', 'fa-building'],
       ['supplier_messages', 'Supplier Messaging', 'fa-comments'],
       ['accreditation', 'Supplier Accreditation', 'fa-id-card']
@@ -44,14 +48,17 @@ const employeeSections: NavSection[] = [
     items: [
       ['orders', 'Purchase & Job Orders', 'fa-file-invoice-dollar'],
       ['delivery', 'Delivery Monitoring', 'fa-truck-ramp-box'],
-      ['amendments', 'Issues & Amendments', 'fa-triangle-exclamation']
+      ['amendments', 'Issues & Amendments', 'fa-triangle-exclamation'],
+      ['delivery_discrepancies', 'Delivery Discrepancies', 'fa-clipboard-list'],
+      ['inventory', 'Inventory Integration', 'fa-boxes-stacked']
     ]
   },
   {
     title: 'Finance',
     items: [
       ['invoice_matching', 'Invoice & PO Matching', 'fa-file-circle-check'],
-      ['payments', 'Payment Management', 'fa-credit-card']
+      ['payments', 'Payment Management', 'fa-credit-card'],
+      ['reports', 'Advanced Reports', 'fa-chart-column']
     ]
   },
   {
@@ -85,6 +92,7 @@ const supplierSections: NavSection[] = [
     title: 'Sourcing',
     items: [
       ['bidding', 'Stock Needs & Bidding', 'fa-gavel'],
+      ['proposal_meetings', 'Proposal Meetings', 'fa-calendar-days'],
       ['supplier_messages', 'Supplier Messaging', 'fa-comments'],
       ['accreditation', 'My Accreditation', 'fa-id-card'],
       ['documents', 'My Documents', 'fa-folder-open']
@@ -95,7 +103,8 @@ const supplierSections: NavSection[] = [
     items: [
       ['orders', 'Assigned Purchase Orders', 'fa-file-invoice-dollar'],
       ['delivery', 'Deliveries & Shipments', 'fa-truck-ramp-box'],
-      ['amendments', 'Order Amendments', 'fa-triangle-exclamation']
+      ['amendments', 'Order Amendments', 'fa-triangle-exclamation'],
+      ['delivery_discrepancies', 'Delivery Discrepancies', 'fa-clipboard-list']
     ]
   },
   {

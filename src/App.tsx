@@ -9,9 +9,16 @@ import BudgetsPage from './pages/BudgetsPage';
 import InvoiceMatchingPage from './pages/InvoiceMatchingPage';
 import DashboardPage from './pages/DashboardPage';
 import BiddingPage from './pages/BiddingPage';
+import BiddingDeadlinesPage from './pages/BiddingDeadlinesPage';
+import BidComparisonPage from './pages/BidComparisonPage';
+import BidEvaluationPage from './pages/BidEvaluationPage';
+import ProposalMeetingsPage from './pages/ProposalMeetingsPage';
 import RequisitionsPage from './pages/RequisitionsPage';
 import OrdersPage from './pages/OrdersPage';
 import DeliveryPage from './pages/DeliveryPage';
+import AdvancedReportsPage from './pages/AdvancedReportsPage';
+import DeliveryDiscrepanciesPage from './pages/DeliveryDiscrepanciesPage';
+import InventoryIntegrationPage from './pages/InventoryIntegrationPage';
 import AmendmentsPage from './pages/AmendmentsPage';
 import PaymentsPage from './pages/PaymentsPage';
 import SuppliersPage from './pages/SuppliersPage';
@@ -31,6 +38,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ModalHost } from './components/ModalHost';
 import { AuthScreen } from './components/AuthScreen';
+import { ActionDialogHost } from './components/ActionDialogHost';
 
 function CurrentPage() {
   if (!canAccessTab(ui.currentTab)) {
@@ -48,11 +56,18 @@ function CurrentPage() {
     case 'invoice_matching': return <InvoiceMatchingPage />;
     case 'pdf_generator': return <PdfDocumentsPage />;
     case 'bidding': return <BiddingPage />;
+    case 'bidding_deadlines': return <BiddingDeadlinesPage />;
+    case 'bid_comparison': return <BidComparisonPage />;
+    case 'bid_evaluation': return <BidEvaluationPage />;
+    case 'proposal_meetings': return <ProposalMeetingsPage />;
     case 'supplier_messages': return <SupplierMessagesPage />;
     case 'accreditation': return <SupplierAccreditationPage />;
     case 'requisitions': return <RequisitionsPage />;
     case 'orders': return <OrdersPage />;
     case 'delivery': return <DeliveryPage />;
+    case 'reports': return <AdvancedReportsPage />;
+    case 'delivery_discrepancies': return <DeliveryDiscrepanciesPage />;
+    case 'inventory': return <InventoryIntegrationPage />;
     case 'amendments': return <AmendmentsPage />;
     case 'payments': return <PaymentsPage />;
     case 'suppliers': return <SuppliersPage />;
@@ -93,6 +108,7 @@ export default function App() {
         </div>
         <ModalHost />
       </div>  : <div key={revision}><AuthScreen /></div>}
+    <ActionDialogHost />
     <div id="toast-container" className="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none" />
   </>;
 }

@@ -1,4 +1,5 @@
 import { useCallback,useEffect,useState } from 'react';
+import { confirmAction, requestInput } from '../services/actionDialogs';
 import {financeAPI,requireFinanceCloud } from '../services/finance';
 import { isFinanceDepartment } from '../domain/staffPositions';
 import type {ApprovalRequest,FinanceSettings} from '../services/finance';
@@ -58,9 +59,15 @@ export default function ApprovalsPage(){
     r.requestedBy!==me?.id && !approvalIntegrityMessage(r) &&
     r.steps.some(step=>step.role==='Finance Officer'&&step.status==='Approved') &&
     !settings?.assignments.some(a=>a.step_role==='Finance Officer'&&a.user_id===me?.id);
-  const financeHeadDecision=(r:ApprovalRequest,decision:'approve'|'reject')=>{
-    const comment=window.prompt(decision==='reject'?'Finance Head rejection reason (required):':'Finance Head approval note (optional):','');
-    if(comment===null||(decision==='reject'&&!comment.trim()))return;
+  const financeHeadDecision=async(r:ApprovalRequest,decision:'approve'|'reject')=>{
+    const comment=await requestInput({
+      title:decision==='reject'?'Reject as Finance Head':'Finance Head Authorization',
+      message:`${r.prId} · ${r.department} · ${money(r.amount)}.\n${decision==='reject'?'Explain why this requisition cannot proceed.':'Review and record your authorization note before proceeding.'}`,
+      label:decision==='reject'?'Rejection reason':'Finance Head approval note',
+      multiline:true, required:decision==='reject',tone:decision==='reject'?'danger':'default',
+      confirmText:decision==='reject'?'Reject requisition':'Approve as Finance Head'
+    });
+    if(comment===null)return;
     void run(()=>financeAPI.decideFinanceHead(r.prId,decision,comment),`Finance Head decision recorded for ${r.prId}.`);
   };
   async function run(action:()=>Promise<unknown>,message:string,after?:()=>Promise<void>){
@@ -69,16 +76,23 @@ export default function ApprovalsPage(){
     catch(e){setError(e instanceof Error?e.message:String(e))}
     finally{setBusy(false)}
   }
-  const reconcile=(pr:ApprovalRequest)=>{
-    if(me?.role!=='Admin'||!window.confirm(`Restore ${pr.prId} from Approved to Pending? This is permitted only when its amount matches and no bidding need or PO is linked.`))return;
+  const reconcile=async(pr:ApprovalRequest)=>{
+    if(me?.role!=='Admin')return;
+    if(!await confirmAction({title:'Restore pending approval',message:`Restore ${pr.prId} from Approved to Pending? This is permitted only when its amount matches and no bidding need or PO is linked.`,tone:'warning',confirmText:'Restore pending status'}))return;
     void run(()=>cloudRequest(`/finance/approvals/${encodeURIComponent(pr.prId)}/reconcile`,{method:'POST',body:'{}'}),`${pr.prId} status reconciled. Procurement Head can now resume the pending approval step.`,async()=>{
       const latest=await cloudRequest('/enterprise-state') as {data?:{requisitions?:typeof DB.requisitions}};
       if(Array.isArray(latest?.data?.requisitions))DB.requisitions=latest.data.requisitions;
     });
   };
-  const doDecision=(pr:ApprovalRequest,decision:'approve'|'reject')=>{
-    const comment=window.prompt(decision==='reject'?'Reason for rejection (required):':'Approval note (optional):','');
-    if(comment===null||(decision==='reject'&&!comment.trim()))return;
+  const doDecision=async(pr:ApprovalRequest,decision:'approve'|'reject')=>{
+    const comment=await requestInput({
+      title:decision==='reject'?'Reject Purchase Requisition':'Approve Purchase Requisition',
+      message:`${pr.prId} · ${pr.department} · ${money(pr.amount)}.\n${decision==='reject'?'Provide a reason for rejecting this approval step.':'You are approving the currently assigned step in the procurement workflow.'}`,
+      label:decision==='reject'?'Rejection reason':'Approval note',
+      multiline:true,required:decision==='reject',tone:decision==='reject'?'danger':'default',
+      confirmText:decision==='reject'?'Reject requisition':'Approve step'
+    });
+    if(comment===null)return;
     void run(()=>financeAPI.decide(pr.prId,decision,comment),`Decision recorded for ${pr.prId}.`,async()=>{
       // Refresh the PR status from the authoritative cloud snapshot without saving stale local data.
       const latest = await cloudRequest('/enterprise-state') as { data?: { requisitions?: typeof DB.requisitions; };};

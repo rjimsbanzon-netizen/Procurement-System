@@ -7,6 +7,7 @@ import { handleDocumentRoutes } from './documentRoutes';
 import { handleNotificationRoutes } from './notificationRoutes';
 import { handleFinanceRoutes, validateFinanceSnapshotWrite } from './financeRoutes';
 import { handleSourcingRoutes, validateSourcingSnapshotWrite } from './sourcingRoutes';
+import { handleOperationsRoutes } from './operationsRoutes';
 
 export interface Env {
   DB: D1Database;
@@ -408,6 +409,10 @@ export default {
       // Feature 9-11: authenticated supplier messaging, deadlines, accreditation.
       const sourcingResponse = await handleSourcingRoutes(request, env, user, cors);
       if (sourcingResponse) return sourcingResponse;
+
+      // Feature 12-14: server-side reports, discrepancy progress, inventory ledger.
+      const operationsResponse = await handleOperationsRoutes(request, env, user, cors);
+      if (operationsResponse) return operationsResponse;
 
       if (pathname === '/auth/me' && request.method === 'GET') {
         return json({ user }, 200, cors);

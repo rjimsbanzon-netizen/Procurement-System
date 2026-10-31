@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { confirmAction } from '../services/actionDialogs';
 import { renderApp } from '../core/renderBridge';
 import { logAudit } from '../services/audit';
 import { CLOUD_API_BASE, cloudRequest } from '../services/cloud';
@@ -56,7 +57,7 @@ export async function rejectUser(userId) {
 export async function revokeUser(userId) {
     const u = DB.users.find(usr => usr.id === userId);
     if (!u || u.role === 'Admin') return;
-    if (!window.confirm(`Revoke access for ${u.name} (@${u.username})? They will be signed out and unable to sign in until access is restored.`)) return;
+    if (!await confirmAction({title:'Revoke account access',message:`Revoke access for ${u.name} (@${u.username})? They will be signed out and unable to sign in until access is restored.`,tone:'warning',confirmText:'Revoke access'})) return;
     if (CLOUD_API_BASE) {
         try {
             await cloudRequest(`/users/${encodeURIComponent(u.id)}`, {
@@ -83,7 +84,7 @@ export async function revokeUser(userId) {
 export async function deleteUserAccount(userId) {
     const u = DB.users.find(usr => usr.id === userId);
     if (!u || u.role === 'Admin') return;
-    if (!window.confirm(`Permanently delete ${u.name} (@${u.username})? This removes the account and all active sessions. This cannot be undone.`)) return;
+    if (!await confirmAction({title:'Permanently delete user account',message:`Permanently delete ${u.name} (@${u.username})? This removes the account and all active sessions. This cannot be undone.`,tone:'danger',confirmText:'Delete account'})) return;
     if (CLOUD_API_BASE) {
         try {
             await cloudRequest(`/users/${encodeURIComponent(u.id)}`, { method: 'DELETE' });
