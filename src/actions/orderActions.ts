@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { renderApp } from '../core/renderBridge';
+import { CLOUD_API_BASE } from '../services/cloud';
+import { financeAPI } from '../services/finance';
 import { canManageDeliveryIssues, hasPermission } from '../domain/permissions';
 import { getRemainingOrderQuantity, isOrderFullyVerified } from '../domain/procurement';
 import { logAudit } from '../services/audit';
@@ -81,12 +83,25 @@ export function openAddSupplierModal() {
 }
 
 
-export function openProcessPaymentModal(payId) {
+export async function openProcessPaymentModal(payId) {
     const payment = DB.payments.find(item => item.id === payId);
     if (!hasPermission('process_payment') || !payment || payment.status !== 'Pending' ||
         !isOrderFullyVerified(payment.poId)) {
         showToast('Payment is available only after the complete Purchase Order passes inspection.', 'error');
         return;
+    }
+    if (CLOUD_API_BASE) {
+        try {
+            await Storage.flush();
+            const match = await financeAPI.matchStatus(payment.poId);
+            if (!match.matched) {
+                showToast('Payment blocked: ' + (match.reasons?.join(' ') || 'Verify supplier invoice against PO and delivery first.'), 'error');
+                return;
+            }
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Could not verify invoice match.', 'error');
+            return;
+        }
     }
     ui.selectedRecord = payId;
     ui.currentModal = 'process_payment';

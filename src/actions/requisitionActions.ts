@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { renderApp } from '../core/renderBridge';
+import { renderApp, navigateTo } from '../core/renderBridge';
+import { CLOUD_API_BASE } from '../services/cloud';
 import { logAudit } from '../services/audit';
 import { Storage } from '../services/storage';
 import { showToast } from '../services/toast';
@@ -7,6 +8,7 @@ import { DB } from '../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function approvePR(id) {
+    if (CLOUD_API_BASE) { showToast('Use the multi-level approval workflow instead.', 'warning'); navigateTo('approvals'); return; }
     const pr = DB.requisitions.find(r => r.id === id);
     if (pr) {
         pr.status = 'Approved';
@@ -19,6 +21,7 @@ export function approvePR(id) {
 
 
 export function rejectPR(id) {
+    if (CLOUD_API_BASE) { showToast('Use the multi-level approval workflow instead.', 'warning'); navigateTo('approvals'); return; }
     const pr = DB.requisitions.find(r => r.id === id);
     if (pr) {
         pr.status = 'Rejected';

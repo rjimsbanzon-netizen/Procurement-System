@@ -4,6 +4,7 @@ import { approvePR, rejectPR, viewPRDetails } from '../actions/requisitionAction
 import { canManageBidding, hasPermission } from '../domain/permissions';
 import { getAvailableRequisitions, getCurrentUserRequisitions } from '../domain/procurement';
 import { DB, ui } from '../store/state';
+import { CLOUD_API_BASE } from '../services/cloud';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderRequisitionsView() {
@@ -66,7 +67,11 @@ export function renderRequisitionsView() {
                                     <td class="p-4">${renderPRStatusBadge(r.status)}</td>
                                     <td class="p-4">
                                         <div class="pr-actions">
-                                        ${r.status === 'Pending' && hasPermission('approve_pr') ? `
+                                        ${r.status === 'Pending' && CLOUD_API_BASE ? `
+                                            <button data-command="navigateTo" data-arg1="approvals" class="pr-action" title="View the multi-level approval status for this request">
+                                                <i class="fa-solid fa-list-check"></i> View Approvals
+                                            </button>
+                                        ` : r.status === 'Pending' && hasPermission('approve_pr') ? `
                                             <button data-command="approvePR" data-arg1="${r.id}" class="pr-action pr-approve">
                                                 <i class="fa-solid fa-check"></i> Approve
                                             </button>
@@ -80,6 +85,7 @@ export function renderRequisitionsView() {
                                                 <i class="fa-solid fa-bullhorn"></i> Publish Need
                                             </button>
                                         ` : ''}
+                                        <button data-command="openTracking" data-arg1="${r.id}" class="pr-action" title="Track procurement progress" aria-label="Track ${r.id}"><i class="fa-solid fa-route"></i> Track</button>
                                         <button data-command="viewPRDetails" data-arg1="${r.id}" class="pr-view" title="View requisition details" aria-label="View requisition details">
                                             <i class="fa-solid fa-eye"></i>
                                         </button>

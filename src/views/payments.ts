@@ -18,7 +18,7 @@ export function renderPaymentsView() {
                 <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                     <div>
                         <h3 class="font-bold text-slate-800">Financial Disbursements & Payment Approvals</h3>
-                        <p class="text-xs text-slate-500">Payments are strictly locked until delivery is Completed – Verified</p>
+                        <p class="text-xs text-slate-500">Payments require a signed PO, fully verified goods receipt, and a matched supplier invoice.</p><button data-command="navigateTo" data-arg1="invoice_matching" class="mt-2 text-xs font-bold text-[#aa5638]">Open Invoice &amp; PO Matching</button>
                     </div>
                 </div>
 

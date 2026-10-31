@@ -1,3 +1,10 @@
+import NotificationsPage from './features/notifications/NotificationsPage';
+import TrackingPage from './features/tracking/TrackingPage';
+import DocumentsPage from './pages/DocumentsPage';
+import PdfDocumentsPage from './pages/PdfDocumentsPage';
+import ApprovalsPage from './pages/ApprovalsPage';
+import BudgetsPage from './pages/BudgetsPage';
+import InvoiceMatchingPage from './pages/InvoiceMatchingPage';
 import DashboardPage from './pages/DashboardPage';
 import BiddingPage from './pages/BiddingPage';
 import RequisitionsPage from './pages/RequisitionsPage';
@@ -30,6 +37,13 @@ function CurrentPage() {
   }
   switch (ui.currentTab) {
     case 'dashboard': return <DashboardPage />;
+    case 'notifications': return <NotificationsPage />;
+    case 'tracking': return <TrackingPage />;
+    case 'documents': return <DocumentsPage />;
+    case 'approvals': return <ApprovalsPage />;
+    case 'budgets': return <BudgetsPage />;
+    case 'invoice_matching': return <InvoiceMatchingPage />;
+    case 'pdf_generator': return <PdfDocumentsPage />;
     case 'bidding': return <BiddingPage />;
     case 'requisitions': return <RequisitionsPage />;
     case 'orders': return <OrdersPage />;

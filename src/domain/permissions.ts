@@ -15,6 +15,13 @@ export function canAccessTab(tab) {
     const isSupplier = DB.currentUser.role === 'Supplier';
     switch (tab) {
         case 'dashboard': return !isSupplier || hasPermission('view_supplier_portal');
+        case 'notifications': return true;
+        case 'approvals': return !isSupplier;
+        case 'budgets': return !isSupplier;
+        case 'invoice_matching': return true;
+        case 'documents':
+        case 'pdf_generator': return true;
+        case 'tracking': return isSupplier ? hasPermission('view_assigned_po') : hasPermission('create_pr') || hasPermission('approve_pr') || hasPermission('view_all_po');
         case 'bidding': return isSupplier ? hasPermission('submit_bids') : canManageBidding();
         case 'requisitions': return hasPermission('create_pr') || hasPermission('approve_pr');
         case 'orders': return hasPermission(isSupplier ? 'view_assigned_po' : 'view_all_po');

@@ -1,14 +1,20 @@
 // @ts-nocheck
 import { respondToAmendment } from '../actions/amendmentActions';
+import { cancelProposalMeeting } from '../actions/biddingActions';
+import { DEFAULT_MEETING_DURATION_MINUTES, escapeMeetingText, findMeetingConflicts, meetingDuration } from '../domain/meetingSchedule';
 import { closeModal } from '../actions/modalActions';
 import { renderApp } from '../core/renderBridge';
+import { financeAPI } from '../services/finance';
 import { canManageBidding, canManageDeliveryIssues, getAgreementFinalizationError, hasPermission } from '../domain/permissions';
 import { getAvailableRequisitions, getRemainingOrderQuantity, isOrderFullyVerified } from '../domain/procurement';
 import { logAudit } from '../services/audit';
 import { CLOUD_API_BASE, CLOUD_TOKEN_KEY, CLOUD_USERNAME_KEY, cloudRequest } from '../services/cloud';
+import { validateSupplierQuotationTerms, type SupplierQuotationTerms } from '../domain/bidTerms';
 import { Storage } from '../services/storage';
 import { showToast } from '../services/toast';
 import { DB, ui } from '../store/state';
+import { financeAPI } from '../services/finance';
+import { navigateTo } from '../core/renderBridge';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function attachMainEvents() {
@@ -41,8 +47,22 @@ export function attachMainEvents() {
     const resetBtn = document.getElementById('reset-db-btn');
     if (resetBtn) {
         resetBtn.addEventListener('click', async () => {
-            if (confirm('Permanently clear all procurement records and audit logs? The Admin account will remain.')) {
+            if (DB.currentUser?.role !== 'Admin') {
+                showToast('Only the Administrator can reset procurement records.', 'error');
+                return;
+            }
+            const confirmation = window.prompt(
+                'ADMIN ONLY: Clear requisitions, orders, approvals, supplier invoices, activity history, and old notification read receipts? User accounts, uploaded documents and Finance settings remain. This cannot be undone without a backup. Type RESET to confirm.'
+            );
+            if (confirmation === null) return;
+            if (confirmation !== 'RESET') {
+                showToast('Reset cancelled: enter RESET exactly to confirm.', 'warning');
+                return;
+            }
+            try {
                 await Storage.reset();
+            } catch (error) {
+                showToast(error instanceof Error ? error.message : 'Cloud reset failed. No records were cleared locally.', 'error');
             }
         });
     }
@@ -115,7 +135,7 @@ export function attachMainEvents() {
     // Forms Submit Events
     const createPrForm = document.getElementById('create-pr-form');
     if (createPrForm) {
-        createPrForm.addEventListener('submit', (e) => {
+        createPrForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const title = document.getElementById('pr-title').value.trim();
             const specs = document.getElementById('pr-specs').value.trim();
@@ -143,8 +163,21 @@ export function attachMainEvents() {
             DB.requisitions.unshift(newPR);
             logAudit('PR Created', `Requisition ${newPR.id} created for ${title}.`);
             Storage.save(DB);
-            showToast(`Requisition ${newPR.id} created successfully!`, 'success');
             closeModal();
+            if (CLOUD_API_BASE) {
+                // Save the PR to the shared snapshot before initiating its D1 approval workflow.
+                // Only the assigned Department Head (or Admin) is permitted to submit it.
+                try {
+                    await Storage.flush();
+                    await financeAPI.start(newPR.id);
+                    showToast(`${newPR.id} submitted to Procurement Head for review.`, 'success');
+                } catch (error) {
+                    showToast(`PR ${newPR.id} saved, but workflow not started: ${error instanceof Error ? error.message : String(error)}. An assigned Department Head may submit it from Approvals.`, 'warning');
+                }
+                navigateTo('approvals');
+            } else {
+                showToast(`Requisition ${newPR.id} created successfully!`, 'success');
+            }
         });
     }
 
@@ -292,7 +325,7 @@ export function attachMainEvents() {
 
     const processPaymentForm = document.getElementById('process-payment-form');
     if (processPaymentForm) {
-        processPaymentForm.addEventListener('submit', (e) => {
+        processPaymentForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const payment = DB.payments.find(p => p.id === ui.selectedRecord);
             const method = document.getElementById('pay-method').value;
@@ -300,6 +333,20 @@ export function attachMainEvents() {
 
             if (hasPermission('process_payment') && payment && payment.status === 'Pending' &&
                 isOrderFullyVerified(payment.poId) && method && ref) {
+                // Verify against the server immediately before changing any payment record.
+                if (CLOUD_API_BASE) {
+                    try {
+                        await Storage.flush();
+                        const matching = await financeAPI.matchStatus(payment.poId);
+                        if (!matching.matched) {
+                            showToast('Cannot disburse: ' + matching.reasons.join(' '), 'error');
+                            return;
+                        }
+                    } catch (error) {
+                        showToast(error instanceof Error ? error.message : 'Invoice match verification failed.', 'error');
+                        return;
+                    }
+                }
                 payment.paymentMethod = method;
                 payment.refNumber = ref;
                 payment.status = 'Paid';
@@ -404,9 +451,28 @@ export function attachMainEvents() {
         submitBidForm.addEventListener('submit', (e) => {
             e.preventDefault();
             const supplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId);
-            const unitPrice = parseFloat(document.getElementById('bid-unit-price').value);
-            const leadTimeDays = parseInt(document.getElementById('bid-lead-time').value);
+            const unitPrice = Number(document.getElementById('bid-unit-price').value);
+            const leadTimeDays = Number(document.getElementById('bid-lead-time').value);
             const notes = document.getElementById('bid-notes').value.trim();
+            const field = id => document.getElementById(id).value.trim();
+            const numberField = id => field(id) === '' ? NaN : Number(field(id));
+            const quotationTerms: SupplierQuotationTerms = {
+                version: 1,
+                offeredModel: field('bid-offered-model'),
+                specificationClaim: field('bid-specification-claim'),
+                specificationExceptions: field('bid-specification-exceptions'),
+                deliveryCommitment: field('bid-delivery-commitment'),
+                warrantyMonths: numberField('bid-warranty-months'),
+                warrantyCoverage: field('bid-warranty-coverage'),
+                warrantyService: field('bid-warranty-service'),
+                replacementDays: numberField('bid-replacement-days'),
+                paymentCondition: field('bid-payment-condition'),
+                validityDays: numberField('bid-validity-days'),
+                afterSalesSupport: field('bid-after-sales-support'),
+                supportingReference: field('bid-supporting-reference'),
+                additionalClauses: field('bid-additional-clauses'),
+                supplierDeclaration: document.getElementById('bid-terms-confirm').checked
+            };
 
             if (DB.currentUser.role !== 'Supplier') {
                 showToast('Only supplier accounts can submit bids.', 'error');
@@ -424,16 +490,17 @@ export function attachMainEvents() {
                 showToast('Your company has already submitted a bid for this procurement need.', 'error');
                 return;
             }
-            if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+            if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
                 showToast('Enter a valid offered unit price in Philippine pesos.', 'error');
                 return;
             }
-            if (!Number.isInteger(leadTimeDays) || leadTimeDays <= 0) {
+            if (!Number.isInteger(leadTimeDays) || leadTimeDays <= 0 || leadTimeDays > 365) {
                 showToast('Enter a valid delivery lead time in whole days.', 'error');
                 return;
             }
-            if (!notes) {
-                showToast('Add product notes, warranty details, or proposal terms before submitting.', 'error');
+            const termsError = validateSupplierQuotationTerms(quotationTerms);
+            if (termsError) {
+                showToast(termsError, 'error');
                 return;
             }
 
@@ -445,7 +512,8 @@ export function attachMainEvents() {
                 unitPrice,
                 totalCost: unitPrice * need.targetQty,
                 leadTimeDays,
-                notes,
+                notes: notes || quotationTerms.offeredModel,
+                quotationTerms,
                 submittedAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
                 status: 'Submitted'
             };
@@ -460,29 +528,74 @@ export function attachMainEvents() {
 
     const scheduleMeetingForm = document.getElementById('schedule-meeting-form');
     if (scheduleMeetingForm) {
+        const getSlot = () => ({
+            date: document.getElementById('mtg-date').value,
+            time: document.getElementById('mtg-time').value,
+            durationMinutes: Number(document.getElementById('mtg-duration').value) || DEFAULT_MEETING_DURATION_MINUTES
+        });
+        const updateConflictWarning = () => {
+            const slot = getSlot();
+            const warning = document.getElementById('mtg-conflict-warning');
+            const submit = document.getElementById('mtg-submit');
+            const conflicts = slot.date && slot.time
+                ? findMeetingConflicts(slot, DB.proposalMeetings)
+                : [];
+            if (warning) {
+                warning.classList.toggle('hidden', conflicts.length === 0);
+                warning.innerHTML = conflicts.length
+                    ? `<i class="fa-solid fa-triangle-exclamation mr-1"></i> <b>Overlapping schedule!</b> This time conflicts with ${conflicts.map(m => `${escapeMeetingText(m.id)} (${escapeMeetingText(m.time)}, ${meetingDuration(m.durationMinutes)} min)`).join(', ')}. Choose another slot or cancel an existing meeting.`
+                    : '';
+            }
+            if (submit) submit.disabled = conflicts.length > 0;
+            if (submit) submit.classList.toggle('opacity-50', conflicts.length > 0);
+        };
+        ['mtg-date', 'mtg-time', 'mtg-duration'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', updateConflictWarning);
+            document.getElementById(id)?.addEventListener('change', updateConflictWarning);
+        });
+        updateConflictWarning();
         scheduleMeetingForm.addEventListener('submit', (e) => {
             e.preventDefault();
             const bid = DB.bids.find(b => b.id === ui.selectedRecord);
-            const date = document.getElementById('mtg-date').value;
-            const time = document.getElementById('mtg-time').value;
+            const { date, time, durationMinutes } = getSlot();
             const meetingMode = document.getElementById('mtg-mode').value;
             const venue = document.getElementById('mtg-venue').value.trim();
             const notes = document.getElementById('mtg-notes').value.trim();
-
             const need = DB.stockNeeds.find(item => item.id === bid?.needId);
-            const latestMeeting = DB.proposalMeetings.find(item => item.bidId === bid?.id);
+            const activeMeetingForBid = DB.proposalMeetings.some(item =>
+                item.bidId === bid?.id && ['Pending Response', 'Agreed'].includes(item.status));
+
+            // Validate again on submit: disabling a button is not a security boundary.
+            if (findMeetingConflicts({ date, time, durationMinutes }, DB.proposalMeetings).length) {
+                updateConflictWarning();
+                showToast('This meeting overlaps an existing schedule. Choose another time.', 'warning');
+                return;
+            }
+            if (new Date(`${date}T${time}:00`).getTime() <= Date.now()) {
+                showToast('Select a future date and time for the proposal meeting.', 'warning');
+                return;
+            }
+            if (![30, 60, 90, 120].includes(durationMinutes)) {
+                showToast('Select a valid meeting duration.', 'error');
+                return;
+            }
             if (canManageBidding() && bid?.status === 'Selected' && need?.selectedBidId === bid.id &&
                 ['Supplier Selected', 'Published'].includes(need.status) &&
-                !['Pending Response', 'Agreed'].includes(latestMeeting?.status) &&
+                !activeMeetingForBid && !DB.orders.some(order => order.bidId === bid?.id) &&
                 date && time && meetingMode && venue) {
+                const nextSerial = DB.proposalMeetings.reduce((max, m) => {
+                    const match = /^MTG-(\d+)$/.exec(m.id);
+                    return match ? Math.max(max, Number(match[1])) : max;
+                }, 4000) + 1;
                 const newMtg = {
-                    id: 'MTG-' + (4000 + DB.proposalMeetings.length + 1),
+                    id: 'MTG-' + nextSerial,
                     needId: bid.needId,
                     bidId: bid.id,
                     supplierId: bid.supplierId,
                     supplierName: bid.supplierName,
                     date,
                     time,
+                    durationMinutes,
                     meetingMode,
                     venue,
                     status: 'Pending Response',
@@ -490,13 +603,22 @@ export function attachMainEvents() {
                 };
 
                 DB.proposalMeetings.unshift(newMtg);
-                logAudit('Proposal Meeting Scheduled', `Meeting ${newMtg.id} scheduled with ${bid.supplierName}`);
+                logAudit('Proposal Meeting Scheduled', `Meeting ${newMtg.id} scheduled with ${bid.supplierName} for ${date} at ${time} (${durationMinutes} minutes)`);
                 Storage.save(DB);
                 showToast(`Proposal meeting scheduled with ${bid.supplierName}!`, 'success');
                 closeModal();
             } else {
                 showToast('The proposal meeting could not be scheduled. Verify supplier selection and meeting details.', 'error');
             }
+        });
+    }
+
+    const cancelMeetingForm = document.getElementById('cancel-meeting-form');
+    if (cancelMeetingForm) {
+        cancelMeetingForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const reason = document.getElementById('mtg-cancel-reason').value;
+            if (cancelProposalMeeting(ui.selectedRecord, reason)) closeModal();
         });
     }
 

@@ -100,31 +100,62 @@ export async function deleteUserAccount(userId) {
 }
 
 
+// The Users screen uses an explicit Save button. A changed dropdown alone is not
+// a persisted permission change; this avoids misleading, unsaved visual state.
+export async function saveUserRole(userId) {
+    const selected = document.getElementById(`user-role-${userId}`);
+    if (!(selected instanceof HTMLSelectElement)) {
+        showToast('Role selector could not be found. Refresh and try again.', 'error');
+        return;
+    }
+    await updateUserRole(userId, selected.value);
+}
+
+
 export async function updateUserRole(userId, newRole) {
     const u = DB.users.find(usr => usr.id === userId);
-    if (u) {
+    const permittedRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Supplier'];
+    if (DB.currentUser?.role !== 'Admin' || !u || u.role === 'Admin' || !permittedRoles.includes(newRole)) {
+        showToast('Only administrators can assign a supported user role.', 'error');
+        renderApp();
+        return;
+    }
+    if (u.role === newRole) {
+        showToast(`${u.name} is already assigned as ${newRole}.`, 'info');
+        renderApp();
+        return;
+    }
+
+    const previousRole = u.role;
+    try {
         if (CLOUD_API_BASE) {
-            try {
-                await cloudRequest(`/users/${encodeURIComponent(u.id)}`, {
-                    method: 'PUT',
-                    body: JSON.stringify({
-                        status: u.status === 'Pending Verification' ? 'pending' : u.status === 'Rejected' ? 'rejected' : 'approved',
-                        appRole: newRole,
-                        accessRevoked: u.accessRevoked || false
-                    })
-                });
-            } catch (error) {
-                showToast(error instanceof Error ? error.message : 'User role update failed.', 'error');
-                renderApp();
-                return;
+            const result = await cloudRequest(`/users/${encodeURIComponent(u.id)}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    status: u.status === 'Pending Verification' ? 'pending' : u.status === 'Rejected' ? 'rejected' : 'approved',
+                    appRole: newRole,
+                    accessRevoked: Boolean(u.accessRevoked)
+                })
+            });
+            if (!result?.ok) throw new Error('Cloudflare did not confirm the role update.');
+
+            // Read the saved row from D1, not the unpersisted select value.
+            // User accounts are NOT stored in /enterprise-state.
+            const accountRows = await cloudRequest('/users', { cache: 'no-store' });
+            const stored = Array.isArray(accountRows) ? accountRows.find(item => item.id === u.id) : null;
+            if (!stored || stored.app_role !== newRole) {
+                throw new Error('Role update could not be verified in Cloudflare D1. Please refresh and check again.');
             }
         }
         u.role = newRole;
-        logAudit('User Role Updated', `User ${u.name} role changed to ${newRole}.`);
+        logAudit('User Role Updated', `User ${u.name} role changed from ${previousRole} to ${newRole}.`);
         Storage.save(DB);
-        showToast(`User role updated to ${newRole}.`, 'info');
-        renderApp();
+        showToast(`Saved: ${u.name} is now ${newRole}.`, 'success');
+    } catch (error) {
+        // Do not claim success or update the locally displayed role on failure.
+        showToast(error instanceof Error ? `Role not saved: ${error.message}` : 'User role was not saved.', 'error');
     }
+    renderApp();
 }
 
 

@@ -6,7 +6,7 @@ export function showToast(message, type = 'info') {
     if(!container) return;
 
     const toast = document.createElement('div');
-    toast.className = `pointer-events-auto flex items-center p-4 max-w-xs w-full rounded-lg shadow-lg text-white transition-all duration-300 transform translate-y-2 opacity-0 ${
+    toast.className = `pointer-events-auto flex items-center p-4 w-full rounded-lg shadow-lg text-white transition-all duration-300 transform translate-y-2 opacity-0 ${type === 'error' ? 'max-w-md break-words' : 'max-w-xs'} ${
         type === 'success' ? 'bg-emerald-600' :
         type === 'error' ? 'bg-rose-600' :
         type === 'warning' ? 'bg-amber-500' : 'bg-sky-600'
@@ -32,5 +32,5 @@ export function showToast(message, type = 'info') {
     setTimeout(() => {
         toast.classList.add('opacity-0', 'translate-y-2');
         setTimeout(() => toast.remove(), 300);
-    }, 3500);
+    }, type === 'error' ? 11000 : 3500);
 }

@@ -10,7 +10,7 @@ export function renderUsersView() {
                 <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                     <div>
                         <h3 class="font-bold text-slate-800">User Account & Authorization Management</h3>
-                        <p class="text-xs text-slate-500 mt-1">Registration creates an Employee account; assign each approved user's position here. Procurement Officer is the delivery staff role for purchase orders, delivery logging, and inspection. Role permissions can be customized in Access Control Matrix.</p>
+                        <p class="text-xs text-slate-500 mt-1">Registration creates an Employee account; choose a position and click Save Role to persist it in Cloudflare D1. Procurement Officer is the delivery staff role for purchase orders, delivery logging, and inspection. Role permissions can be customized in Access Control Matrix.</p>
                     </div>
                 </div>
 
@@ -35,12 +35,16 @@ export function renderUsersView() {
                                     </td>
                                     <td class="p-4">
                                         ${u.role === 'Admin' ? `<span class="text-xs font-semibold text-slate-700">Administrator</span>` : `
-                                            <select data-command="updateUserRole" data-arg1="${u.id}" data-arg2="@value" class="text-xs border border-slate-300 rounded px-2 py-1 focus:ring-2 focus:ring-sky-500">
-                                                <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
-                                                <option value="Procurement Officer" ${u.role === 'Procurement Officer' ? 'selected' : ''}>Procurement Officer / Delivery Staff</option>
-                                                <option value="Procurement Head" ${u.role === 'Procurement Head' ? 'selected' : ''}>Procurement Head</option>
-                                                <option value="Supplier" ${u.role === 'Supplier' ? 'selected' : ''}>Supplier</option>
-                                            </select>
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <select id="user-role-${u.id}" aria-label="Role for ${u.username}" class="text-xs border border-slate-300 rounded px-2 py-2 focus:ring-2 focus:ring-sky-500">
+                                                    <option value="Employee" ${u.role === 'Employee' ? 'selected' : ''}>Employee</option>
+                                                    <option value="Procurement Officer" ${u.role === 'Procurement Officer' ? 'selected' : ''}>Procurement Officer / Delivery Staff</option>
+                                                    <option value="Procurement Head" ${u.role === 'Procurement Head' ? 'selected' : ''}>Procurement Head</option>
+                                                    <option value="Supplier" ${u.role === 'Supplier' ? 'selected' : ''}>Supplier</option>
+                                                </select>
+                                                <button type="button" data-command="saveUserRole" data-arg1="${u.id}" class="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded text-xs font-semibold transition-colors">Save Role</button>
+                                            </div>
+                                            <p class="mt-1 text-[11px] font-semibold text-slate-600">Saved role: ${u.role}</p>
                                             <p class="mt-1 max-w-xs text-[11px] text-slate-500">${getRoleAuthorizationSummary(u.role)}</p>
                                         `}
                                     </td>

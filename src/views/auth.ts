@@ -65,7 +65,7 @@ export function renderAuthScreen() {
 
                     <div>
                         <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Username</label>
-                        <input type="text" id="auth-username" required ${isSignup ? 'minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]{3,32}" title="Use 3–32 letters, numbers, periods, underscores, or hyphens."' : ''} placeholder="Enter your username" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm">
+                        <input type="text" id="auth-username" required ${isSignup ? 'minlength="3" maxlength="32" pattern="(?:[A-Za-z0-9._]|-){3,32}" title="Use 3–32 letters, numbers, periods, underscores, or hyphens."' : ''} placeholder="Enter your username" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm">
                     </div>
 
                     <div>

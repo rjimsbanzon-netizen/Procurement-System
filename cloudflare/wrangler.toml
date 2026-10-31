@@ -1,19 +1,16 @@
 # Cloudflare Worker + D1 binding for ProcureCorp
-# Docs: https://developers.cloudflare.com/d1/
-
 name = "procurecorp-api"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
-# Create DB first:
-#   npx wrangler d1 create procurecorp-db
-# Then paste the database_id below.
-
 [[d1_databases]]
 binding = "DB"
 database_name = "procurecorp-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "1dca6a5f-bc28-46c6-9ac2-8cec53f9b882"
+
+[[kv_namespaces]]
+binding = "DOCUMENTS"
+id = "80e178a7f9914b9ea8f6f88e93240fd5"
 
 [vars]
-# Set this to the exact origin of the deployed frontend before production deployment.
 # ALLOWED_ORIGIN = "https://your-app.pages.dev"

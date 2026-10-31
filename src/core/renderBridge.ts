@@ -5,3 +5,6 @@ let listener: (() => void) | null = null;
 export function registerRenderListener(callback: (() => void) | null) { listener = callback; }
 export function renderApp() { listener?.(); }
 export function navigateTo(tab: string) { ui.currentTab = tab; renderApp(); }
+
+/** Open the transaction timeline at the selected purchase requisition. */
+export function openTracking(prId: string) { ui.trackingRecordId = prId; navigateTo('tracking'); }

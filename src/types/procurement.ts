@@ -42,4 +42,5 @@ export interface ProcurementState {
   accessControl?: ProcurementRecord[];
 }
 export type Tab = 'dashboard' | 'requisitions' | 'bidding' | 'orders' | 'delivery'
-  | 'amendments' | 'payments' | 'suppliers' | 'audit' | 'users' | 'access_control';
+  | 'amendments' | 'payments' | 'suppliers' | 'audit' | 'users' | 'access_control'
+  | 'notifications' | 'tracking' | 'documents' | 'pdf_generator';

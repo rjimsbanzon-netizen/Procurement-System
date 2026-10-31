@@ -97,8 +97,11 @@ export class Storage {
             cloudSaveError = null;
         }).catch(error => {
             cloudSaveError = error;
-            console.error('Enterprise data could not be saved to Cloudflare D1.', error);
-            showToast('Cloud save failed. Your latest changes are not confirmed in D1.', 'error');
+            const reason = error instanceof Error ? error.message : String(error);
+            console.error('Enterprise data could not be saved to Cloudflare D1. Server reason:', reason, error);
+            // cloudRequest already includes the Worker response's error message.
+            // Show it rather than obscuring a useful 409 Conflict or 403 Forbidden.
+            showToast(`Cloud save not confirmed: ${reason}`, 'error');
         });
     }
 
@@ -112,16 +115,45 @@ export class Storage {
     }
 
     static async reset() {
+        if (DB.currentUser?.role !== 'Admin') {
+            throw new Error('Administrator access is required to clear procurement records.');
+        }
+        const admin = DB.currentUser;
         const freshState = Storage.empty();
         freshState.users = (DB.users || []).filter(user => user.role === 'Admin');
-        freshState.currentUser = DB.currentUser?.role === 'Admin' ? DB.currentUser : null;
-        setDB(freshState);
-        Storage.save(DB);
-        try {
-            await Storage.flush();
-        } catch {
-            return;
+        freshState.currentUser = admin;
+        if (CLOUD_API_BASE) {
+            const token = localStorage.getItem(CLOUD_TOKEN_KEY);
+            if (!token) throw new Error('Cloud session expired. Sign in again before resetting.');
+            // Never clear browser state before D1 commits all deletes atomically.
+            try {
+                await Storage.flush();
+            } catch (saveError) {
+                // A failed earlier save is settled; an explicit Admin reset must
+                // not be blocked forever by a previously rejected stale snapshot.
+                console.warn('Continuing the explicit Admin reset after an earlier failed cloud save.', saveError);
+            }
+            const result = await cloudRequest('/finance/admin/reset-workspace', {
+                method: 'POST',
+                body: JSON.stringify({ confirmation: 'RESET' })
+            }, token);
+            freshState.auditLogs = Array.isArray(result.auditLogs) ? result.auditLogs : [];
+        } else {
+            freshState.auditLogs = [{
+                id: `log-reset-${crypto.randomUUID()}`,
+                timestamp: new Date().toISOString(),
+                user: admin.name,
+                role: 'Admin',
+                action: 'Procurement Records Reset',
+                details: 'Administrator cleared local procurement records and requisition history.'
+            }];
         }
+        // Prevent this browser from retaining old notification-read markers for
+        // reference numbers reused after an administrator clears the workspace.
+        Object.keys(localStorage).filter(key => key.startsWith('procureflow_read_notifications_v1_'))
+            .forEach(key => localStorage.removeItem(key));
+        setDB(freshState);
+        localStorage.setItem('eprocurement_db', JSON.stringify(freshState));
         location.reload();
     }
 }
