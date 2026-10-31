@@ -4,6 +4,7 @@ import { syncRequisitionStatuses } from '../domain/procurement';
 import { CLOUD_API_BASE, CLOUD_RECORD_COLLECTIONS, CLOUD_TOKEN_KEY, cloudRequest } from './cloud';
 import { showToast } from './toast';
 import { DB, setDB } from '../store/state';
+import { normalizeMatrix } from '../domain/accessMatrix';
 
 // Local persistence + serialized Cloudflare API sync.
 let cloudSaveQueue = Promise.resolve();
@@ -42,7 +43,7 @@ export class Storage {
         try {
             const parsed = JSON.parse(data);
             // Ensure permissions fallback if upgraded
-            if (!parsed.permissions) parsed.permissions = INITIAL_STATE.permissions;
+            parsed.permissions=normalizeMatrix(parsed.permissions);
             if (!parsed.ratings) parsed.ratings = INITIAL_STATE.ratings;
             if (!parsed.stockNeeds) parsed.stockNeeds = INITIAL_STATE.stockNeeds;
             if (!parsed.bids) parsed.bids = INITIAL_STATE.bids;

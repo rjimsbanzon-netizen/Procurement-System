@@ -1,10 +1,10 @@
 // @ts-nocheck
-import { submitSecureBid, deadlineIsOpen, loadDeadlines } from '../services/sourcing';
 import { respondToAmendment } from '../actions/amendmentActions';
 import { cancelProposalMeeting } from '../actions/biddingActions';
 import { DEFAULT_MEETING_DURATION_MINUTES, escapeMeetingText, findMeetingConflicts, meetingDuration } from '../domain/meetingSchedule';
 import { closeModal } from '../actions/modalActions';
 import { renderApp } from '../core/renderBridge';
+import { financeAPI } from '../services/finance';
 import { canManageBidding, canManageDeliveryIssues, getAgreementFinalizationError, hasPermission } from '../domain/permissions';
 import { getAvailableRequisitions, getRemainingOrderQuantity, isOrderFullyVerified } from '../domain/procurement';
 import { logAudit } from '../services/audit';
@@ -337,6 +337,11 @@ export function attachMainEvents() {
                 if (CLOUD_API_BASE) {
                     try {
                         await Storage.flush();
+                        const authorization = await financeAPI.paymentAuthority(payment.poId);
+                        if (!authorization.allowed) {
+                            showToast(authorization.reason || `Only the assigned ${authorization.requiredRole} may process this payment.`, 'error');
+                            return;
+                        }
                         const matching = await financeAPI.matchStatus(payment.poId);
                         if (!matching.matched) {
                             showToast('Cannot disburse: ' + matching.reasons.join(' '), 'error');
@@ -347,16 +352,34 @@ export function attachMainEvents() {
                         return;
                     }
                 }
+                const previous = { ...payment };
+                const auditRecord = {
+                    id: 'log-' + crypto.randomUUID(),
+                    timestamp: new Date().toISOString().replace('T',' ').substring(0,16),
+                    user: DB.currentUser.name,
+                    role: DB.currentUser.role,
+                    action: 'Disbursement Completed',
+                    details: `Payment ${payment.id} processed via ${method}. Ref: ${ref}`
+                };
                 payment.paymentMethod = method;
                 payment.refNumber = ref;
                 payment.status = 'Paid';
                 payment.paymentDate = new Date().toISOString().substring(0, 10);
                 payment.processedBy = DB.currentUser.name;
-
-                logAudit('Disbursement Completed', `Payment ${payment.id} processed via ${method}. Ref: ${ref}`);
-                Storage.save(DB);
-                showToast(`Disbursement of ₱${payment.paymentAmount.toLocaleString()} confirmed!`, 'success');
-                closeModal();
+                DB.auditLogs.unshift(auditRecord);
+                try {
+                    Storage.save(DB);
+                    await Storage.flush();
+                    showToast(`Disbursement of ₱${payment.paymentAmount.toLocaleString()} confirmed!`, 'success');
+                    closeModal();
+                } catch (error) {
+                    Object.assign(payment, previous);
+                    DB.auditLogs = DB.auditLogs.filter(item => item.id !== auditRecord.id);
+                    // Restore the local demo snapshot without issuing a second cloud write.
+                    localStorage.setItem('eprocurement_db', JSON.stringify(DB));
+                    showToast(error instanceof Error ? `Payment not saved: ${error.message}` : 'Payment was not saved.', 'error');
+                    renderApp();
+                }
             } else {
                 showToast('Payment is blocked until every item is received and verified.', 'error');
             }
@@ -448,9 +471,9 @@ export function attachMainEvents() {
                 ? `₱${(unitPrice * (need?.targetQty || 0)).toLocaleString()}`
                 : 'Enter a valid unit price';
         });
-        submitBidForm.addEventListener('submit', async (e) => {
+        submitBidForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            const supplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId) || (DB.currentUser.supplierId && DB.currentUser.companyName ? { id: DB.currentUser.supplierId, name: DB.currentUser.companyName } : null);
+            const supplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId);
             const unitPrice = Number(document.getElementById('bid-unit-price').value);
             const leadTimeDays = Number(document.getElementById('bid-lead-time').value);
             const notes = document.getElementById('bid-notes').value.trim();
@@ -518,20 +541,11 @@ export function attachMainEvents() {
                 status: 'Submitted'
             };
 
-            try {
-                // The Worker checks its own clock, cutoff, account accreditation and duplicate bids.
-                await loadDeadlines();
-                if (!deadlineIsOpen(need.id)) throw new Error('The bidding deadline has passed or submissions are closed.');
-                const result = await submitSecureBid({needId:need.id,unitPrice,leadTimeDays,notes,quotationTerms});
-                // Read the server-committed version instead of writing an old browser snapshot.
-                const snapshot = await cloudRequest('/enterprise-state');
-                DB.bids = Array.isArray(snapshot?.data?.bids) ? snapshot.data.bids : [result.bid, ...DB.bids];
-                if (Array.isArray(snapshot?.data?.auditLogs)) DB.auditLogs = snapshot.data.auditLogs;
-                showToast(`Bid submitted successfully for ${need.title}!`, 'success');
-                closeModal();
-            } catch(error) {
-                showToast(error instanceof Error ? error.message : 'Bid not accepted by Cloudflare.', 'error');
-            }
+            DB.bids.unshift(newBid);
+            logAudit('Bid Submitted', `Supplier ${supplier.name} submitted bid for ${need.id}`);
+            Storage.save(DB);
+            showToast(`Bid submitted successfully for ${need.title}!`, 'success');
+            closeModal();
         });
     }
 

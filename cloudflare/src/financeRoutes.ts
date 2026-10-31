@@ -29,7 +29,11 @@ const validDepartmentName=(input:unknown):string|null=>{
 async function knownDepartment(env:FinanceEnv,name:string):Promise<string|null>{
   const row=await env.DB.prepare('SELECT name FROM organization_departments WHERE name=? COLLATE NOCASE')
     .bind(name).first<{name:string}>();
-  return row?.name??null;
+  if(row?.name)return row.name;
+  // Existing installations may have budgets created before department-directory setup.
+  const legacy=await env.DB.prepare('SELECT department FROM department_budgets WHERE department=? COLLATE NOCASE')
+    .bind(name).first<{department:string}>();
+  return legacy?.department??null;
 }
 function snapshotUsesDepartment(data:Snapshot,department:string):boolean {
   return [data.requisitions,data.orders,data.payments,data.deliveries].some(
@@ -159,6 +163,32 @@ function inspectInvoice(data:Snapshot,invoice:Row) {
   }
   return {po,reasons};
 }
+/** Payment authorization is enforced against the APPROVED PO value and active D1 staff assignments.
+ * The Finance Head threshold is configured in Department Budgets and applies to payment processing.
+ */
+async function paymentAuthority(env:FinanceEnv,user:FinanceUser,poValue:unknown):Promise<{
+  allowed:boolean;requiredRole:'Finance Officer'|'Finance Head';threshold:number;reason:string;
+}> {
+  const rule=await env.DB.prepare('SELECT finance_head_from_cents FROM finance_rules WHERE id=1').first<{finance_head_from_cents:number}>();
+  const threshold=Number(rule?.finance_head_from_cents??100_000_000);
+  const poCents=toCents(poValue);
+  const headRequired=Number.isSafeInteger(poCents)&&poCents>=threshold;
+  const requiredRole=headRequired?'Finance Head':'Finance Officer';
+  const deny=(reason:string):{allowed:boolean;requiredRole:'Finance Officer'|'Finance Head';threshold:number;reason:string}=>({allowed:false,requiredRole,threshold:amount(threshold),reason});
+  if(!Number.isSafeInteger(poCents))return deny('The Purchase Order amount is invalid.');
+  if(user.role==='guest'||user.role==='admin')return deny(`Only the assigned ${requiredRole} may process this payment. Admin has oversight, not payment processing authority.`);
+  const head=await assignedFinanceHead(env);
+  const officer=await env.DB.prepare(`SELECT a.user_id,u.role,u.app_role,u.department,u.status,u.access_revoked
+    FROM finance_approvers a JOIN users u ON u.id=a.user_id
+    WHERE a.step_role='Finance Officer' AND a.department='*' LIMIT 1`).first<Row>();
+  if(head&&officer&&head.user_id===officer.user_id)return deny('Finance Head and Finance Officer must be assigned to different employees.');
+  const selected=headRequired?head:officer;
+  if(!selected)return deny(`No ${requiredRole} is assigned. Admin must appoint one in Staff Assignments.`);
+  if(!activeFinanceEmployee(selected))return deny(`The assigned ${requiredRole} is not an active Finance & Accounting employee.`);
+  if(user.id!==selected.user_id)return deny(`This payment is reserved for the assigned ${requiredRole}.`);
+  return {allowed:true,requiredRole,threshold:amount(threshold),reason:''};
+}
+
 function canSeeInvoice(user:FinanceUser,inv:Row) { return user.role!=='guest' || same(user.company_name,inv.supplier_name); }
 export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:FinanceUser,cors:HeadersInit):Promise<Response|null> {
   const path = new URL(request.url).pathname;
@@ -173,6 +203,15 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     const financeAssigned = await canApproveStep(env,user,'Finance Officer','*');
     return reply({budgets:all.filter(b=>financeAssigned||canSeeDepartment(user,b.department))},200,cors);
   }
+  const paymentAuthRoute=path.match(/^\/finance\/payment-authority\/([^/]+)$/);
+  if(paymentAuthRoute&&method==='GET') {
+    if(!staff)return reply({error:'Staff account required.'},403,cors);
+    const poId=decodeURIComponent(paymentAuthRoute[1]);
+    const {data}=await snapshot(env);
+    const po=data.orders.find(row=>row.id===poId);
+    if(!po)return reply({error:'Purchase Order not found.'},404,cors);
+    return reply(await paymentAuthority(env,user,po.totalCost),200,cors);
+  }
   if(path==='/finance/staff'&&method==='GET') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
     const people=(await env.DB.prepare("SELECT id,name,username,app_role,department FROM users WHERE role!='guest' AND status='approved' AND access_revoked=0 ORDER BY name").all<Row>()).results;
@@ -181,8 +220,17 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   // Department directory is editable and is the single source for the Head picker.
   if(path==='/finance/departments'&&method==='GET') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
-    const rows=(await env.DB.prepare('SELECT name FROM organization_departments ORDER BY name COLLATE NOCASE').all<{name:string}>()).results;
-    return reply({departments:rows.map(row=>row.name)},200,cors);
+    // Show registered departments and legacy budget departments together.
+    const [catalog,budgets]=await Promise.all([
+      env.DB.prepare('SELECT name FROM organization_departments ORDER BY name COLLATE NOCASE').all<{name:string}>(),
+      env.DB.prepare('SELECT department FROM department_budgets ORDER BY department COLLATE NOCASE').all<{department:string}>()
+    ]);
+    const merged=new Map<string,string>();
+    for(const name of [...catalog.results.map(row=>row.name),...budgets.results.map(row=>row.department)]){
+      const cleaned=String(name??'').trim();
+      if(cleaned&&!merged.has(cleaned.toLowerCase()))merged.set(cleaned.toLowerCase(),cleaned);
+    }
+    return reply({departments:[...merged.values()].sort((a,b)=>a.localeCompare(b))},200,cors);
   }
   if(path==='/finance/departments'&&method==='POST') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
@@ -212,7 +260,9 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       env.DB.prepare("UPDATE users SET department=?,updated_at=datetime('now') WHERE LOWER(TRIM(department))=LOWER(?)").bind(newName,oldCanonical),
       env.DB.prepare('UPDATE department_budgets SET department=? WHERE LOWER(TRIM(department))=LOWER(?)').bind(newName,oldCanonical),
       env.DB.prepare("UPDATE finance_approvers SET department=?,updated_at=datetime('now') WHERE LOWER(TRIM(department))=LOWER(?)").bind(newName,oldCanonical),
-      env.DB.prepare("UPDATE organization_departments SET name=?,updated_at=datetime('now') WHERE name=? COLLATE NOCASE").bind(newName,oldCanonical)
+      env.DB.prepare("UPDATE organization_departments SET name=?,updated_at=datetime('now') WHERE name=? COLLATE NOCASE").bind(newName,oldCanonical),
+      // If the former name existed only in department_budgets, register the new name.
+      env.DB.prepare('INSERT OR IGNORE INTO organization_departments(name) VALUES(?)').bind(newName)
     ]);
     return reply({ok:true},200,cors);
   }
@@ -792,11 +842,25 @@ export async function validateFinanceSnapshotWrite(env:FinanceEnv, incoming:Reco
     }
     if(old?.status==='Approved'&&pr.status==='Pending')return `Cannot reverse approved PR ${pr.id} via snapshot save.`;
   }
+  for (const earlier of oldPayments) {
+    if (earlier.status !== 'Paid') continue;
+    const current = newPayments.find(p => p.id===earlier.id);
+    if (!current || ['status','poId','totalAmount','paymentAmount','paymentMethod','refNumber','paymentDate','processedBy']
+      .some(key=>JSON.stringify(earlier[key]??null)!==JSON.stringify(current[key]??null))) {
+      return `Paid transaction ${earlier.id} cannot be deleted or altered by a normal workspace save.`;
+    }
+  }
   for(const payment of newPayments){
     const old=oldPayments.find(p=>p.id===payment.id);
     if(payment.status==='Paid'&&old?.status!=='Paid'){
       const po=newOrders.find(o=>o.id===payment.poId);
-      if(!po)return `Payment ${payment.id} is missing its Purchase Order.`;
+      const originalPo=oldOrders.find(o=>o.id===payment.poId);
+      if(!po||!originalPo)return `Payment ${payment.id} requires an existing, approved Purchase Order.`;
+      if(toCents(po.totalCost)!==toCents(originalPo.totalCost))return `Payment blocked for ${po.id}: the Purchase Order amount changed. Refresh before payment.`;
+      if(toCents(payment.totalAmount)!==toCents(originalPo.totalCost)||toCents(payment.paymentAmount)!==toCents(originalPo.totalCost))
+        return `Payment blocked for ${po.id}: payment amount must equal the approved Purchase Order amount.`;
+      const access=await paymentAuthority(env,actor,originalPo.totalCost);
+      if(!access.allowed)return `Payment blocked for ${po.id}: ${access.reason}`;
       const inv=await env.DB.prepare("SELECT * FROM supplier_invoices WHERE po_id=? AND status='Matched' LIMIT 1").bind(payment.poId).first<Row>();
       if(!inv)return `Payment blocked for ${payment.poId}: three-way invoice match is required.`;
       const document=await env.DB.prepare("SELECT id FROM procurement_documents WHERE id=? AND entity_type='PO' AND entity_id=? AND category='Invoice'")

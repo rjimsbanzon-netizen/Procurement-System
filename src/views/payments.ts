@@ -1,24 +1,40 @@
 // @ts-nocheck
 import { openProcessPaymentModal } from '../actions/orderActions';
-import { hasPermission } from '../domain/permissions';
+import { hasPermission, getCurrentPermissionRole } from '../domain/permissions';
+import { isFinanceDepartment } from '../domain/staffPositions';
 import { isOrderFullyVerified } from '../domain/procurement';
 import { DB } from '../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
-export function renderPaymentsView() {
+export function renderPaymentsView(settings: import('../services/finance').FinanceSettings | null = null) {
     let payList = DB.payments;
     if (DB.currentUser.role === 'Supplier') {
         const mySup = DB.suppliers.find(s => s.id === DB.currentUser.supplierId);
         if (mySup) payList = payList.filter(p => p.supplierName === mySup.name);
     }
 
+    const myRole=getCurrentPermissionRole();
+    const headThreshold=settings?.financeHeadFrom ?? null;
+    const assignments=settings?.assignments ?? [];
+    const currentUser=DB.currentUser;
+    const requiredReviewer=(p)=>{
+       const amount=Number(DB.orders.find(o=>o.id===p.poId)?.totalCost ?? p.totalAmount);
+       return headThreshold!==null && amount>=headThreshold?'Finance Head':'Finance Officer';
+    };
+    const authorizedFor=(p)=>{
+       if(headThreshold===null||!isFinanceDepartment(currentUser?.department))return false;
+       const role=requiredReviewer(p);
+       const assigned=role==='Finance Head'?assignments.find(a=>a.step_role==='Department Head'&&isFinanceDepartment(a.department)):
+         assignments.find(a=>a.step_role==='Finance Officer'&&a.department==='*');
+       return myRole===role&&assigned?.user_id===currentUser?.id&&hasPermission('process_payment');
+    };
     return `
         <div class="space-y-4">
             <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                     <div>
                         <h3 class="font-bold text-slate-800">Financial Disbursements & Payment Approvals</h3>
-                        <p class="text-xs text-slate-500">Payments require a signed PO, fully verified goods receipt, and a matched supplier invoice.</p><button data-command="navigateTo" data-arg1="invoice_matching" class="mt-2 text-xs font-bold text-[#aa5638]">Open Invoice &amp; PO Matching</button>
+                        <p class="text-xs text-slate-500">Payments require a signed PO, verified receipt, and matched invoice. Only the assigned Finance Officer may process amounts below the Finance Head threshold; the assigned Finance Head handles amounts at or above it.</p><button data-command="navigateTo" data-arg1="invoice_matching" class="mt-2 text-xs font-bold text-[#aa5638]">Open Invoice &amp; PO Matching</button>
                     </div>
                 </div>
 
@@ -55,15 +71,11 @@ export function renderPaymentsView() {
                                     </td>
                                     <td class="p-4">${renderPaymentStatusBadge(p.status)}</td>
                                     <td class="p-4 text-center">
-                                        ${hasPermission('process_payment') ? `
-                                            ${p.status === 'Paid' ? `
-                                                <span class="text-xs text-emerald-600 font-semibold"><i class="fa-solid fa-shield-check mr-1"></i> Confirmed Paid</span>
-                                            ` : `
+                                        ${p.status==='Paid'?'<span class="text-xs text-emerald-600 font-semibold">Confirmed Paid</span>': authorizedFor(p) ? `
                                                 <button data-command="openProcessPaymentModal" data-arg1="${p.id}" ${!isOrderFullyVerified(p.poId) ? 'disabled' : ''} class="px-3 py-1.5 ${!isOrderFullyVerified(p.poId) ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'} rounded-md text-xs font-semibold shadow-sm transition-colors">
                                                     <i class="fa-solid fa-money-check-dollar mr-1"></i> Process Payment
                                                 </button>
-                                            `}
-                                        ` : `<span class="text-xs text-slate-400">View Only</span>`}
+                                        ` : `<div class="text-xs text-slate-500">${headThreshold===null && currentUser?.role!=='Supplier'?'Loading Finance settings…':`Assigned ${requiredReviewer(p)} required`}</div>`}
                                     </td>
                                 </tr>
                             `).join('')}

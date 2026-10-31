@@ -52,5 +52,6 @@ export const financeAPI={
     anchor.click();anchor.remove();
     window.setTimeout(()=>URL.revokeObjectURL(url),60_000);
   },
+  paymentAuthority:(poId:string)=>request<{allowed:boolean;requiredRole:'Finance Officer'|'Finance Head';threshold:number;reason:string}>(`/finance/payment-authority/${encodeURIComponent(poId)}`),
   matchStatus:(poId:string)=>request<{matched:boolean;reasons:string[];invoiceId:string|null}>(`/finance/match-status/${encodeURIComponent(poId)}`),
 };

@@ -5,11 +5,14 @@ export const INITIAL_STATE = {
     nonAdminUsersPruned: true,
     // Role Permission Matrix for Access Control Management
     permissions: {
-        'Admin': ['create_pr', 'approve_pr', 'record_delivery', 'manage_delivery_issues', 'approve_amendment', 'process_payment', 'confirm_payment', 'manage_users', 'manage_suppliers', 'rate_supplier', 'manage_permissions', 'view_all_po', 'manage_bidding'],
-        'Procurement Head': ['create_pr', 'approve_pr', 'record_delivery', 'manage_delivery_issues', 'approve_amendment', 'process_payment', 'confirm_payment', 'manage_suppliers', 'rate_supplier', 'view_all_po', 'manage_bidding'],
-        'Procurement Officer': ['create_pr', 'record_delivery', 'manage_suppliers', 'rate_supplier', 'view_all_po'],
+        'Admin': ['create_pr', 'approve_pr', 'record_delivery', 'manage_delivery_issues', 'approve_amendment', 'manage_users', 'manage_suppliers', 'rate_supplier', 'manage_permissions', 'view_all_po', 'manage_bidding'],
+        'Procurement Head': ['create_pr','approve_pr','record_delivery','manage_delivery_issues','approve_amendment','manage_suppliers','rate_supplier','view_all_po','manage_bidding'],
+        'Procurement Officer': ['create_pr','record_delivery','manage_suppliers','rate_supplier','view_all_po'],
+        'Department Head': ['create_pr'],
         'Employee': ['create_pr'],
-        'Supplier': ['view_assigned_po', 'view_supplier_portal', 'submit_bids']
+        'Finance Officer': ['process_payment','confirm_payment','view_all_po'],
+        'Finance Head': ['process_payment','confirm_payment','view_all_po'],
+        'Supplier': ['view_assigned_po','view_supplier_portal','submit_bids']
     },
     users: [
         { id: 'usr-1', username: 'admin', name: 'System Administrator', role: 'Admin', department: 'Executive', status: 'Active', email: 'admin@enterprise.com', password: 'password123', supplierId: null }

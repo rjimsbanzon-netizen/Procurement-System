@@ -93,6 +93,11 @@ export async function openProcessPaymentModal(payId) {
     if (CLOUD_API_BASE) {
         try {
             await Storage.flush();
+            const authorization = await financeAPI.paymentAuthority(payment.poId);
+            if (!authorization.allowed) {
+                showToast(authorization.reason || `Only the ${authorization.requiredRole} may process this payment.`, 'error');
+                return;
+            }
             const match = await financeAPI.matchStatus(payment.poId);
             if (!match.matched) {
                 showToast('Payment blocked: ' + (match.reasons?.join(' ') || 'Verify supplier invoice against PO and delivery first.'), 'error');

@@ -1,4 +1,5 @@
 export type Role = 'Admin' | 'Procurement Head' | 'Procurement Officer' | 'Employee' | 'Supplier';
+export type PermissionRole = Role | 'Department Head' | 'Finance Officer' | 'Finance Head';
 export type Permission =
   | 'create_pr' | 'approve_pr' | 'record_delivery' | 'manage_delivery_issues'
   | 'approve_amendment' | 'process_payment' | 'confirm_payment'
@@ -26,7 +27,7 @@ export interface ProcurementRecord {
 export interface ProcurementState {
   currentUser: User | null;
   nonAdminUsersPruned: boolean;
-  permissions: Record<Role, string[]>;
+  permissions: Record<PermissionRole, string[]>;
   users: User[];
   stockNeeds: ProcurementRecord[];
   bids: ProcurementRecord[];
@@ -43,5 +44,4 @@ export interface ProcurementState {
 }
 export type Tab = 'dashboard' | 'requisitions' | 'bidding' | 'orders' | 'delivery'
   | 'amendments' | 'payments' | 'suppliers' | 'audit' | 'users' | 'access_control'
-  | 'notifications' | 'tracking' | 'documents' | 'pdf_generator'
-  | 'supplier_messages' | 'accreditation';
+  | 'notifications' | 'tracking' | 'documents' | 'pdf_generator';

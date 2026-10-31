@@ -161,46 +161,42 @@ export async function updateUserRole(userId, newRole) {
 
 export async function saveAccessControlMatrix() {
     if (DB.currentUser?.role !== 'Admin') {
-        showToast('Administrator access is required to manage permissions.', 'error');
+        showToast('Only Admin can edit the permission matrix.', 'error');
         return;
     }
-    const checkboxes = document.querySelectorAll('input[type="checkbox"][data-role]');
-    const newPerms = {
-        'Admin': [],
-        'Procurement Head': [],
-        'Procurement Officer': [],
-        'Employee': [],
-        'Supplier': []
-    };
-
-    checkboxes.forEach(cb => {
-        const role = cb.getAttribute('data-role');
-        const action = cb.getAttribute('data-action');
-        if (cb.checked) {
-            if (!newPerms[role]) newPerms[role] = [];
-            newPerms[role].push(action);
+    const {MATRIX_ROLES, LEGACY_PERMISSIONS, normalizeMatrix}=await import('../domain/accessMatrix');
+    const proposed={};
+    for (const role of MATRIX_ROLES) {
+        const enabled=[];
+        for (const action of LEGACY_PERMISSIONS) {
+            const cb=Array.from(document.querySelectorAll('input[type="checkbox"][data-role][data-action]'))
+                .find(el=>el.getAttribute('data-role')===role&&el.getAttribute('data-action')===action);
+            if(cb?.checked)enabled.push(action);
         }
-    });
-
+        proposed[role]=enabled;
+    }
+    const normalized=normalizeMatrix(proposed);
     try {
-        if (CLOUD_API_BASE) {
-            await cloudRequest('/access-control', {
-                method: 'PUT',
-                body: JSON.stringify({ permissions: newPerms })
+        if(CLOUD_API_BASE){
+            const saved=await cloudRequest('/access-control',{
+                method:'PUT',body:JSON.stringify({permissions:normalized})
             });
+            if(!saved?.ok)throw new Error('The server did not confirm your permissions update.');
+            // Verify the persisted matrix instead of claiming a local-only success.
+            const fresh=await cloudRequest('/access-control',{cache:'no-store'});
+            for(const role of MATRIX_ROLES){
+                const expected=[...normalized[role]].sort().join('|');
+                const actual=[...(fresh?.permissions?.[role]||[])].sort().join('|');
+                if(expected!==actual)throw new Error(`Could not verify saved permissions for ${role}.`);
+            }
         }
-        DB.permissions = newPerms;
-        DB.accessControl = Object.entries(newPerms).map(([role, permissions]) => ({ role, permissions }));
-        logAudit('Permissions Updated', 'Access Control Matrix permissions updated by Admin.');
+        DB.permissions=normalized;
+        DB.accessControl=MATRIX_ROLES.map(role=>({role,permissions:[...normalized[role]]}));
+        logAudit('Permissions Updated','Admin updated the procurement permissions matrix.');
         await Storage.flush();
-        showToast('Permissions Matrix successfully updated.', 'success');
+        showToast('Permission matrix saved and verified. Workflow restrictions remain enforced.', 'success');
         renderApp();
-    } catch (error) {
-        showToast(
-            error instanceof Error
-                ? `Could not save the permissions matrix: ${error.message}`
-                : 'Could not save the permissions matrix.',
-            'error'
-        );
+    }catch(error){
+        showToast(error instanceof Error?`Permissions not saved: ${error.message}`:'Permissions could not be saved.','error');
     }
 }

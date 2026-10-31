@@ -1,27 +1,36 @@
-# ProcureFlow — Finance Officer department display correction
+# ProcureFlow — Module visibility regression repair
 
-This patch was prepared from the latest Editable Departments / One Head per Department patch.
+## Confirmed regression
+The earlier `ProcureFlow_Updated_Access_Matrix_Finance_Threshold_Payment_Fix.zip` included a full replacement `src/domain/permissions.ts` that **omitted these module cases**:
 
-## Replace only
+- `supplier_messages` — Supplier Messaging
+- `accreditation` — Supplier Accreditation
+- `staff_assignments` — Staff Assignments (added by a separate Admin module integration)
 
-`src/pages/StaffAssignmentsPage.tsx`
+`Sidebar.tsx` filters every menu entry through `canAccessTab()`. Without the cases, all three return `false` and disappear, even though their pages, messages, and other data may still exist.
 
-## Changes
+The **later** `ProcureFlow_Editable_Budgets_Simplified_Access_Matrix_Fix.zip` contains only `BudgetsPage.tsx` and `views/accessControl.ts`; it **does not delete message or accreditation code**. It deliberately hides *workflow-only rows* from the editable Access Control Matrix, including the non-editable Supplier Messaging row. Those rows should not be confused with the app modules.
 
-- The Finance Officer selection now displays **Finance & Accounting** as the home department instead of **All departments**.
-- Current assignments show **Finance & Accounting** and a secondary clarification that the **review scope is all departments**.
-- The Save button reflects the responsibility chosen (Finance Officer, Finance Head, Department Head).
-- The database still uses `finance_approvers.department = '*'` for Finance Officer assignments. That value represents **approval scope**, not the employee's home department. It must not be changed without changing the approval authorization logic.
-- Existing Finance Officer assignments, restrictions, payment/PR checks, and separation between Finance Head and Finance Officer are unchanged.
+## Safe fix
+Copy `scripts/restore-hidden-modules.mjs` into your project's `scripts/` directory. Run **from the project root**, not `cloudflare`:
 
-## Deploy
+```powershell
+cd D:\GitHub\Procurement-System
+node scripts/restore-hidden-modules.mjs --check
+node scripts/restore-hidden-modules.mjs --apply
+npm run build
+```
 
-1. Back up your current `src/pages/StaffAssignmentsPage.tsx`.
-2. Replace it with the file in this ZIP.
-3. Run from project root:
+The script makes a timestamped backup and only inserts the missing cases into your **existing** `src/domain/permissions.ts`. It does not replace your newer access matrix, Finance rules, invoice modules, Worker, or message history. Running it twice does not duplicate cases. It also checks that the app routes, sidebar entries, pages and sourcing API integration exist. **Review warnings before deploying**; if page or API files are missing, the permission patch alone is not enough.
 
-   `npm run build`
+Once the frontend builds, publish it through your usual website deployment process. **No database reset or migration is required for this permission fix.**
 
-4. Deploy the frontend to GitHub Pages.
+## Expected access
+- Supplier Messaging: Supplier (own conversations), Admin, Procurement Head, Procurement Officer; existing transaction-level API authorization still applies.
+- Supplier Accreditation: Supplier (own documents), Admin, Procurement Head; existing reviewer/document checks still apply.
+- Staff Assignments: Admin only.
 
-No Cloudflare Worker changes, database migration, or D1 reset are needed.
+Bidding deadlines are inside Bidding & Proposals, not a separate navigation entry. The fix does not alter bidding deadlines, notifications, payment thresholds or any user records.
+
+## Security note
+Restoring a *tab visibility rule* does not by itself grant backend access. The underlying API must still enforce authorization. Do not replace the whole Worker with an older file to fix a missing menu item.

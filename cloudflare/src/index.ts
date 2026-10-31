@@ -31,7 +31,8 @@ type User = {
 };
 
 const ACCESS_CONTROL_ROLES = [
-  'Admin', 'Procurement Head', 'Procurement Officer', 'Employee', 'Supplier'
+  'Admin', 'Procurement Head', 'Procurement Officer', 'Department Head',
+  'Employee', 'Finance Officer', 'Finance Head', 'Supplier'
 ] as const;
 const ACCESS_CONTROL_ACTIONS = new Set([
   'create_pr', 'approve_pr', 'manage_suppliers', 'manage_bidding',
@@ -449,6 +450,22 @@ export default {
         }
         const normalized = Object.fromEntries(ACCESS_CONTROL_ROLES.map(role =>
           [role, [...new Set(input[role] as string[])]]));
+        // Enforce non-delegable authorities on the server as well as the UI.
+        for (const [role, actions] of Object.entries(normalized)) {
+          const sensitive = ['process_payment', 'confirm_payment'];
+          for (const action of sensitive) {
+            const index = actions.indexOf(action);
+            if (role === 'Finance Officer' || role === 'Finance Head') {
+              if (index === -1) actions.push(action);
+            } else if (index !== -1) actions.splice(index, 1);
+          }
+          for (const action of ['manage_users', 'manage_permissions']) {
+            const index = actions.indexOf(action);
+            if (role === 'Admin') {
+              if (index === -1) actions.push(action);
+            } else if (index !== -1) actions.splice(index, 1);
+          }
+        }
         await env.DB.prepare(
           `INSERT INTO access_control_settings (id, data, updated_at)
            VALUES (1, ?, datetime('now'))

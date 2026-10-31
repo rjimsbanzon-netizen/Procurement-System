@@ -1,14 +1,34 @@
 // @ts-nocheck
 import { DB } from '../store/state';
+import { getCachedStaffAssignments, isFinanceDepartment } from './staffPositions';
+import { DEFAULT_MATRIX, fixedValue, type MatrixRole } from './accessMatrix';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
-export function hasPermission(action) {
-    if (!DB.currentUser) return false;
-    const role = DB.currentUser.role;
-    const userPerms = DB.permissions[role] || [];
-    return userPerms.includes(action);
+/** Active permissions follow the appointed role, not just the stored Employee account type. */
+export function getCurrentPermissionRole():MatrixRole | null {
+    const user=DB.currentUser;
+    if(!user)return null;
+    if(['Admin','Supplier','Procurement Head','Procurement Officer'].includes(user.role)) return user.role as MatrixRole;
+    const assignments=getCachedStaffAssignments(user.id);
+    const financeHead=assignments.some(a=>a.user_id===user.id&&a.step_role==='Department Head'&&
+       isFinanceDepartment(a.department)&&isFinanceDepartment(user.department));
+    const financeOfficer=assignments.some(a=>a.user_id===user.id&&a.step_role==='Finance Officer'&&a.department==='*'&&
+       isFinanceDepartment(user.department));
+    if(financeHead&&financeOfficer)return 'Employee'; // Conflicting roles never grant payment rights.
+    if(financeHead)return 'Finance Head';
+    if(financeOfficer)return 'Finance Officer';
+    if(assignments.some(a=>a.user_id===user.id&&a.step_role==='Department Head'&&
+       String(a.department).toLowerCase()===String(user.department).toLowerCase()))return 'Department Head';
+    return 'Employee';
 }
-
+export function hasPermission(action) {
+    const role=getCurrentPermissionRole();
+    if(!role)return false;
+    const locked=fixedValue(role,action);
+    if(locked!==null)return locked;
+    const perms=DB.permissions[role]||DEFAULT_MATRIX[role]||[];
+    return perms.includes(action);
+}
 
 export function canAccessTab(tab) {
     if (!DB.currentUser) return false;
@@ -21,6 +41,7 @@ export function canAccessTab(tab) {
         case 'invoice_matching': return true;
         case 'supplier_messages': return isSupplier || ['Admin','Procurement Head','Procurement Officer'].includes(DB.currentUser.role);
         case 'accreditation': return isSupplier || ['Admin','Procurement Head'].includes(DB.currentUser.role);
+        case 'staff_assignments': return DB.currentUser.role === 'Admin';
         case 'documents':
         case 'pdf_generator': return true;
         case 'tracking': return isSupplier ? hasPermission('view_assigned_po') : hasPermission('create_pr') || hasPermission('approve_pr') || hasPermission('view_all_po');
@@ -36,12 +57,11 @@ export function canAccessTab(tab) {
                 ? hasPermission('view_assigned_po')
                 : canManageDeliveryIssues() || canApproveAmendments();
         case 'payments':
-            return isSupplier
-                ? hasPermission('view_assigned_po')
-                : hasPermission('process_payment') || hasPermission('confirm_payment');
+            return isSupplier ? hasPermission('view_assigned_po')
+                : ['Admin','Procurement Head','Procurement Officer'].includes(DB.currentUser.role) ||
+                  hasPermission('process_payment') || hasPermission('confirm_payment');
         case 'suppliers': return hasPermission('manage_suppliers') || hasPermission('rate_supplier');
         case 'audit': return DB.currentUser.role === 'Admin';
-        case 'staff_assignments': return DB.currentUser.role === 'Admin';
         case 'users': return DB.currentUser.role === 'Admin' && hasPermission('manage_users');
         case 'access_control': return DB.currentUser.role === 'Admin';
         default: return false;

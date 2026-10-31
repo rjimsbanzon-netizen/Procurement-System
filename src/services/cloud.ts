@@ -5,6 +5,7 @@ import { logAudit } from './audit';
 import { Storage } from './storage';
 import { showToast } from './toast';
 import { DB, setDB, ui } from '../store/state';
+import { normalizeMatrix } from '../domain/accessMatrix';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export const CLOUD_TOKEN_KEY = 'procurement_enterprise_token';
@@ -96,14 +97,8 @@ export function applyCloudState(data, user, users = [user], accessControl = null
             category: 'Registered Supplier'
         });
     }
-    if (accessControl?.permissions && typeof accessControl.permissions === 'object') {
-        Object.keys(state.permissions).forEach(role => {
-            const permissions = accessControl.permissions[role];
-            if (Array.isArray(permissions)) {
-                state.permissions[role] = permissions.filter(permission => typeof permission === 'string');
-            }
-        });
-    }
+    state.permissions=normalizeMatrix(accessControl?.permissions || null);
+
     state.users = users.map(account => mapCloudUser(account, state.suppliers));
     state.currentUser = user;
     setDB(state);

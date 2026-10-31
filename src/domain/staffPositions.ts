@@ -44,35 +44,35 @@ function position(name: string, department: string, detail: string, source: Effe
  */
 export function getEffectivePosition(user: StaffAccount, assignments: readonly StaffAssignment[]): EffectivePosition {
   if (user.role === 'Admin')
-    return { ...position('Admin', 'Executive', 'Protected Admin account', 'account'), label: 'Admin' };
+    return position('Admin', 'Executive', 'Protected administrator account', 'account');
   if (user.role === 'Supplier')
     return position('Supplier', user.companyName || user.department || 'External Vendor', 'Supplier portal account', 'account');
 
-  // Head assignments are authoritative, including Procurement. A stale
-  // account role must not keep showing a former Procurement Head after Admin
-  // reassigns Procurement in D1.
-  const procurementAssignment = assignments.find(item =>
-    item.step_role === 'Department Head' && same(item.department, 'Procurement'));
+  // This account role already means Head of Procurement; a stale profile
+  // department must not make it look like the Head of another department.
+  if (user.role === 'Procurement Head') {
+    const result = position('Head', 'Procurement', 'Procurement Head · Procurement department', 'account');
+    if (user.department && !same(user.department, 'Procurement')) {
+      result.accountDepartmentMismatch = true;
+      result.detail = `Procurement Head belongs to Procurement. The account profile currently says ${user.department}; an administrator should correct the saved account department.`;
+    }
+    return result;
+  }
+
   const mine = assignments.filter(item => item.user_id === user.id);
-  if (user.role === 'Procurement Head' && procurementAssignment && procurementAssignment.user_id !== user.id)
-    return position('Employee', 'Procurement', 'Former Procurement Head; D1 assignment was transferred.', 'assignment');
-  if (procurementAssignment?.user_id === user.id)
-    return position('Head', 'Procurement', 'Current Procurement Head · assigned in D1', 'assignment');
-  if (user.role === 'Procurement Head')
-    return position('Head', 'Procurement', 'Legacy Procurement Head · assign one Head in Staff Assignments.', 'account');
-  const heads = mine.filter(item => item.step_role === 'Department Head' &&
-    (same(item.department, user.department) ||
-      (isFinanceDepartment(item.department) && isFinanceDepartment(user.department))));
+  const heads = mine.filter(item => item.step_role === 'Department Head' && same(item.department, user.department));
   const finance = mine.filter(item => item.step_role === 'Finance Officer' && item.department === '*');
 
-  // A Head and Finance Officer are independent staff responsibilities.
-  // Existing legacy dual assignments require an Admin to remove one.
+  // Finance Head (appointed Head of Finance) and Finance Officer must be
+  // different employees. A stale double assignment does not grant either title.
   if (heads.length && finance.length)
-    return position('Assignment conflict', user.department || '', 'This account is both Finance Head and Finance Officer. Admin must keep these roles with different staff.', 'conflict');
+    return position('Assignment conflict', user.department || '', 'Finance Head and Finance Officer require separate active accounts.', 'conflict');
+  if (heads.length && isFinanceDepartment(user.department))
+    return position('Finance Head', heads[0].department, 'Head of Finance & Accounting · high-value financial authorization', 'assignment');
   if (heads.length)
     return position('Head', heads[0].department, 'Department Head requester · cannot approve own requisition', 'assignment');
   if (finance.length && isFinanceDepartment(user.department))
-    return position('Finance Officer', 'Finance & Accounting', 'Assigned Finance reviewer · may approve Finance steps, except their own requisition', 'assignment');
+    return position('Finance Officer', user.department || '', 'Assigned Finance reviewer · routine financial approval and payment processing', 'assignment');
 
   if (user.role === 'Procurement Officer')
     return position('Employee', 'Procurement', 'Procurement Officer / Delivery Staff · Procurement department', 'account');
@@ -105,3 +105,8 @@ export function invalidateStaffAssignments():void {
   if(typeof window!=='undefined')window.dispatchEvent(new Event(STAFF_ASSIGNMENTS_UPDATED));
 }
 
+
+/** Permission evaluation needs a synchronous view of the latest user-specific D1 assignments. */
+export function getCachedStaffAssignments(userId:string):StaffAssignment[] {
+  return cached?.userId===userId ? cached.assignments : [];
+}
