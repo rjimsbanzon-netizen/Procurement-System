@@ -10,6 +10,7 @@ const isReserved=(department:string)=>reservedDepartments.has(department.trim().
 
 export default function BudgetsPage(){
   const [rows,setRows]=useState<BudgetRow[]>([]);
+  const [departmentOptions,setDepartmentOptions]=useState<string[]>([]);
   const [department,setDepartment]=useState(''),[allocation,setAllocation]=useState('');
   const [financeFrom,setFinanceFrom]=useState('0'),[financeHeadFrom,setFinanceHeadFrom]=useState('1000000'),[adminFrom,setAdminFrom]=useState('0');
   const [error,setError]=useState(''),[note,setNote]=useState(''),[busy,setBusy]=useState(false);
@@ -17,8 +18,13 @@ export default function BudgetsPage(){
 
   const refresh=useCallback(async()=>{
     try {
-      const [budget,config]=await Promise.all([financeAPI.budgets(),financeAPI.settings()]);
+      const [budget,config,catalog]=await Promise.all([
+        financeAPI.budgets(),
+        financeAPI.settings(),
+        admin?financeAPI.departments().catch(()=>({departments:[]})):Promise.resolve({departments:[]})
+      ]);
       setRows(budget.budgets);
+      setDepartmentOptions(catalog.departments);
       setFinanceFrom(String(config.financeFrom));
       setFinanceHeadFrom(String(config.financeHeadFrom));
       setAdminFrom(String(config.adminFrom));
@@ -27,7 +33,13 @@ export default function BudgetsPage(){
   },[admin]);
   useEffect(()=>{void refresh()},[refresh]);
 
-  const departments=[...new Set([...rows.map(b=>b.department),...DB.requisitions.map(r=>String(r.department||''))].filter(Boolean))].sort();
+  // Choose registered departments plus any existing legacy budget departments.
+  const departments=[...new Set([...departmentOptions,...rows.map(b=>b.department)].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  function selectDepartment(name:string){
+    setDepartment(name);
+    const existing=rows.find(row=>row.department===name);
+    setAllocation(existing?String(existing.allocated):'');
+  }
 
   async function save(work:()=>Promise<unknown>,message:string){
     setBusy(true);setError('');setNote('');
@@ -94,11 +106,16 @@ export default function BudgetsPage(){
     </div>
 
     {admin&&<div className="grid lg:grid-cols-2 gap-5">
-      <form id="budget-allocation-form" onSubmit={e=>{e.preventDefault();void save(()=>financeAPI.saveBudget(department,Number(allocation)),`Budget updated for ${department}.`)}} className="bg-white border rounded-xl p-5 space-y-3">
+      <form id="budget-allocation-form" onSubmit={e=>{e.preventDefault();if(!departments.includes(department))return;void save(()=>financeAPI.saveBudget(department,Number(allocation)),`Budget updated for ${department}.`)}} className="bg-white border rounded-xl p-5 space-y-3">
         <h3 className="font-bold">Set department allocation</h3>
-        <label className="block text-sm">Department<input list="budget-departments" value={department} onChange={e=>setDepartment(e.target.value)} required placeholder="e.g. IT Systems" className="mt-1 w-full border rounded-lg p-2"/><datalist id="budget-departments">{departments.map(d=><option key={d} value={d}/>)}</datalist></label>
+        <label className="block text-sm">Department
+          <select value={departments.includes(department)?department:''} onChange={e=>selectDepartment(e.target.value)} required className="mt-1 w-full border rounded-lg p-2 bg-white">
+            <option value="" disabled>Select a department</option>
+            {departments.map(d=><option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
         <label className="block text-sm">Allocated amount (PHP)<input type="number" min="0" step="0.01" required value={allocation} onChange={e=>setAllocation(e.target.value)} className="mt-1 w-full border rounded-lg p-2"/></label>
-        <button disabled={busy} className="bg-[#aa5638] text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50">Save allocation</button>
+        <button disabled={busy||!departments.includes(department)||!allocation} className="bg-[#aa5638] text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50">Save allocation</button>
       </form>
       <form onSubmit={e=>{e.preventDefault();void save(()=>financeAPI.saveSettings(Number(financeFrom),Number(financeHeadFrom),Number(adminFrom)),'Approval thresholds saved.')}} className="bg-white border rounded-xl p-5 space-y-3">
         <h3 className="font-bold">Approval rules</h3>
