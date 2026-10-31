@@ -3,6 +3,7 @@ import { DB, ui } from '../store/state';
 import { canAccessTab } from '../domain/permissions';
 import { navigateTo } from '../core/renderBridge';
 import { getNotifications, getUnreadCount } from '../features/notifications/notificationService';
+import procureflowMark from '../procureflow-mark.png';
 
 // App.tsx currently remounts its entire shell on renderApp(). Remember the
 // sidebar position across those remounts instead of jumping back to Overview.
@@ -156,7 +157,7 @@ export function Sidebar() {
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="sidebar-brand px-5 py-5 flex items-center gap-3 border-b border-slate-800">
           <div className="sidebar-mark">
-            <img src="/procureflow-mark.svg" alt="ProcureFlow" className="w-10 h-10 object-contain rounded-md" />
+            <img src={procureflowMark} alt="ProcureFlow" className="w-10 h-10 object-contain rounded-md" />
           </div>
           <div className="sidebar-brand-copy min-w-0">
             <div className="font-bold text-white text-[1.55rem] leading-none">ProcureFlow</div>
