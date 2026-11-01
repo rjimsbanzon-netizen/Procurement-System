@@ -1,3 +1,4 @@
+import { formatQuantity } from '../../domain/measurementUnits';
 import { DB } from '../../store/state';
 import { ownsRequisition } from '../../domain/ownerIdentity';
 import type { ProcurementRecord, ProcurementState, User } from '../../types/procurement';
@@ -85,8 +86,8 @@ export function getProcurementJourney(prId: string, state: ProcurementState = DB
     },
     {
       id: 'delivery', title: 'Delivery & inspection',
-      detail: fullyVerified ? `All ${completeQty} units inspected and verified` : deliveries.length ?
-        `${completeQty} verified out of ${order?.quantity || '?'} ordered · inspection in progress` : 'No delivery inspection recorded yet',
+      detail: fullyVerified ? `All ${formatQuantity(completeQty, order?.unit || pr.unit)} inspected and verified` : deliveries.length ?
+        `${formatQuantity(completeQty, order?.unit || pr.unit)} verified out of ${formatQuantity(order?.quantity, order?.unit || pr.unit)} ordered · inspection in progress` : 'No delivery inspection recorded yet',
       status: fullyVerified ? 'complete' : order ? 'current' : 'upcoming',
       reference: deliveries[0]?.id, date: deliveries[0]?.actualDate
     },

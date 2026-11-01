@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantity } from '../domain/measurementUnits';
 import { emptyTableRow } from './shared/feedback';
 import { acceptPurchaseOrder, openRecordDeliveryModal } from '../actions/orderActions';
 import { hasPermission } from '../domain/permissions';
@@ -43,7 +44,7 @@ export function renderOrdersView() {
                                     <td class="p-4">${o.department}</td>
                                     <td class="p-4">
                                         <div class="font-medium text-slate-800">${o.itemTitle}</div>
-                                        <div class="text-xs text-slate-500">Qty: ${o.quantity}</div>
+                                        <div class="text-xs text-slate-500">Qty: ${formatQuantity(o.quantity, o.unit)}</div>
                                     </td>
                                     <td class="p-4 text-right font-bold text-slate-900">₱${(o.totalCost || 0).toLocaleString()}</td>
                                     <td class="p-4">${o.poDate}</td>

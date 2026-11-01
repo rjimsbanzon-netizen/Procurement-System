@@ -9,7 +9,7 @@ import { logAudit } from '../services/audit';
 import { showToast } from '../services/toast';
 import { hasPermission } from '../domain/permissions';
 import { fieldClass, mainButton, peso, secondaryButton } from './CoreScreenUI';
-import { unitLabel, type QuantityUnit } from '../domain/measurementUnits';
+import { displayUnit, unitLabel, formatQuantity, type QuantityUnit } from '../domain/measurementUnits';
 import { SearchableMeasurementUnit } from './SearchableMeasurementUnit';
 
 /** Requisition creation is React-managed; cloud submission still uses the existing D1 approval workflow. */
@@ -87,7 +87,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
         <label className="block text-sm font-semibold text-slate-700">Item title / description<input className={`${fieldClass} mt-1`} value={title} onChange={e => setTitle(e.target.value)} maxLength={200} required placeholder="e.g. Ergonomic Office Chairs"/></label>
         <label className="block text-sm font-semibold text-slate-700">Specifications & requirements<textarea className={`${fieldClass} mt-1`} rows={3} value={specs} onChange={e => setSpecs(e.target.value)} required placeholder="Detailed dimensions and required specifications"/></label>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-sm font-semibold text-slate-700">Quantity
+          <label className="block text-sm font-semibold text-slate-700">Quantity ({displayUnit(unitOfMeasure)})
             <input className={`${fieldClass} mt-1`} type="number" min="1" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} required/>
           </label>
           <SearchableMeasurementUnit
@@ -95,7 +95,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
             onChange={setUnitOfMeasure}
             inputClassName={fieldClass}
           />
-          <label className="block text-sm font-semibold text-slate-700">Est. unit price (₱)
+          <label className="block text-sm font-semibold text-slate-700">Est. price (₱ per {displayUnit(unitOfMeasure)})
             <input className={`${fieldClass} mt-1`} type="number" min="0" step="0.01" value={price} onChange={e => setPrice(e.target.value)} required/>
           </label>
           <label className="block text-sm font-semibold text-slate-700">Target needed
@@ -103,7 +103,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
           </label>
         </div>
         <label className="block text-sm font-semibold text-slate-700">Remarks / justification<textarea className={`${fieldClass} mt-1`} rows={2} value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Purpose for the request"/></label>
-        <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Estimated total: <strong className="text-slate-900">{peso(Number(quantity) * Number(price))}</strong></div>
+        <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Quantity: <strong>{formatQuantity(quantity, unitOfMeasure)}</strong><span className="mx-2">·</span>Estimated total: <strong className="text-slate-900">{peso(Number(quantity) * Number(price))}</strong></div>
         {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
         <footer className="flex flex-wrap justify-end gap-2 border-t pt-4"><button className={secondaryButton} type="button" disabled={busy} onClick={dismiss}>Cancel</button><button type="submit" disabled={busy} className={mainButton}>{busy ? 'Saving…' : editId ? 'Save changes' : 'Submit Requisition'}</button></footer>
       </form>}

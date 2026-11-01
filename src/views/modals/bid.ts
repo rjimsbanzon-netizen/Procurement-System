@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantity } from '../../domain/measurementUnits';
 import { DB, ui } from '../../store/state';
 
 function escapeHtml(value) {
@@ -27,14 +28,14 @@ export function renderSubmitBidModal() {
               Claims will still be checked against the official quotation and product evidence before supplier selection.
             </div>
             <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-700">
-              <p><strong>Required quantity:</strong> ${Number(need.targetQty).toLocaleString('en-PH')} ${need.unit || 'units'}</p>
+              <p><strong>Required quantity:</strong> ${formatQuantity(need.targetQty, need.unit)}</p>
               <p><strong>Maximum budget:</strong> ₱${Number(need.budgetCap || 0).toLocaleString('en-PH')}</p>
               <p><strong>Required specifications:</strong> ${escapeHtml(need.techSpecs)}</p>
             </div>
             <fieldset class="space-y-3">
               <legend class="text-sm font-bold text-slate-900">1. Pricing and Delivery</legend>
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label class="text-xs font-semibold text-slate-700">Unit price (PHP) *
+                <label class="text-xs font-semibold text-slate-700">Price (PHP per ${formatQuantity(1, need.unit).replace(/^1 /, '')}) *
                   <input id="bid-unit-price" type="number" min="0.01" step="0.01" required placeholder="e.g. 1200" class="mt-1 block w-full rounded-lg border border-slate-300 p-2.5 text-sm font-normal"/>
                 </label>
                 <label class="text-xs font-semibold text-slate-700">Lead time (calendar days) *

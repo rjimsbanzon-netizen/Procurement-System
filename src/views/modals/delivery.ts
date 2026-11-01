@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantity, displayUnit, formatQuantityRatio } from '../../domain/measurementUnits';
 import { getRemainingOrderQuantity } from '../../domain/procurement';
 import { DB, ui } from '../../store/state';
 
@@ -47,13 +48,13 @@ export function renderRecordDeliveryModal() {
                 <form id="record-delivery-form" class="space-y-4">
                     <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
                         <p class="font-bold text-slate-800">${order.id}: ${order.itemTitle}</p>
-                        <p class="text-slate-500 mt-0.5">Vendor: ${order.supplierName} &bull; Ordered Qty: ${order.quantity} ${order.unit || 'units'}</p>
-                        <p class="text-slate-500 mt-1">Remaining Qty to receive: ${remainingQty} ${order.unit || 'units'}</p>
+                        <p class="text-slate-500 mt-0.5">Vendor: ${order.supplierName} &bull; Ordered Qty: ${formatQuantity(order.quantity, order.unit)}</p>
+                        <p class="text-slate-500 mt-1">Remaining Qty to receive: ${formatQuantity(remainingQty, order.unit)}</p>
                     </div>
 
                     <div class="grid grid-cols-2 gap-3">
                         <div>
-                            <label for="del-qty" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Delivered Qty (${order.unit || 'units'})</label>
+                            <label for="del-qty" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Delivered Qty (${displayUnit(order.unit)})</label>
                             <input type="number" id="del-qty" min="1" max="${remainingQty}" value="${remainingQty}" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
                         </div>
                         <div>
@@ -116,7 +117,7 @@ export function renderInspectDeliveryModal() {
                 <form id="inspect-delivery-form" class="space-y-4">
                     <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs space-y-1">
                         <p class="font-bold text-slate-800">${delivery.poId}: ${delivery.itemTitle}</p>
-                        <p class="text-slate-500">Delivered: ${delivery.deliveredQty} / ${delivery.orderedQty} ${delivery.unit || 'units'}</p>
+                        <p class="text-slate-500">Delivered: ${formatQuantityRatio(delivery.deliveredQty, delivery.orderedQty, delivery.unit || DB.orders.find(o => o.id === delivery.poId)?.unit)}</p>
                         <p class="text-slate-600 font-medium">Specs: ${delivery.specs}</p>
                     </div>
 

@@ -1,3 +1,4 @@
+import { formatQuantity, formatQuantityRatio } from '../domain/measurementUnits';
 import { EmptyState, LoadingState } from '../components/FeedbackState';
 import { useCallback, useEffect, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
@@ -241,7 +242,7 @@ export default function InvoiceMatchingPage() {
         {po && <div className="grid sm:grid-cols-2 gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600">
           <div><span className="text-slate-500">Supplier</span><p className="font-semibold text-slate-800 mt-1">{po.supplierName}</p></div>
           <div><span className="text-slate-500">PO value</span><p className="font-bold text-slate-800 mt-1">{money(Number(po.totalCost || 0))}</p></div>
-          <div><span className="text-slate-500">Items / quantity</span><p className="font-semibold text-slate-800 mt-1">{po.itemTitle || 'Purchase order'} · {po.quantity} {po.unit || 'units'}</p></div>
+          <div><span className="text-slate-500">Items / quantity</span><p className="font-semibold text-slate-800 mt-1">{po.itemTitle || 'Purchase order'} · {formatQuantity(po.quantity, po.unit)}</p></div>
           <div><span className="text-slate-500">PO status</span><p className="font-semibold text-slate-800 mt-1">{po.status}</p></div>
         </div>}
         <div className="grid sm:grid-cols-2 gap-3">
@@ -297,7 +298,7 @@ export default function InvoiceMatchingPage() {
           <p className="text-xs text-slate-500 mt-1">The system compares PO status, delivery inspection, invoiced amount and attached evidence. Passing these checks does not count as Finance approval.</p></div>
         {!po ? <p className="bg-slate-50 rounded-lg p-4 text-sm text-slate-500">{isSupplier ? 'Select a Purchase Order to see what still needs verification.' : 'Choose Review checks for an invoice to inspect its Purchase Order.'}</p> : <>
           <Check status={poSigned ? 'pass' : 'wait'}>{poSigned ? 'Purchase Order accepted / issued.' : 'Waiting for the supplier to accept the Purchase Order.'}</Check>
-          <Check status={deliveryVerified ? 'pass' : 'wait'}>{deliveryVerified ? `All ${quantity} ${po?.unit || 'units'} received and inspected.` : `Delivery: ${deliveredQty}/${quantity} ${po?.unit || 'units'} recorded. All deliveries must pass inspection.`}</Check>
+          <Check status={deliveryVerified ? 'pass' : 'wait'}>{deliveryVerified ? `All ${formatQuantity(quantity, po?.unit)} received and inspected.` : `Delivery: ${formatQuantityRatio(deliveredQty, quantity, po?.unit)} recorded. All deliveries must pass inspection.`}</Check>
           <Check status={!amount.trim() ? 'wait' : amountMatches ? 'pass' : 'fail'}>{!amount.trim() ? 'Enter the invoice total to compare with the PO.' : amountMatches ? 'Invoice amount equals PO total.' : `Invoice amount differs from ${money(Number(po.totalCost || 0))}.`}</Check>
           <Check status={file || documentId ? 'pass' : 'wait'}>{file ? `New file selected: ${file.name}` : documentId ? 'An invoice document is selected.' : 'An invoice file is required.'}</Check>
           <div className="bg-sky-50 border border-sky-100 text-sky-900 rounded-lg p-3 text-xs">

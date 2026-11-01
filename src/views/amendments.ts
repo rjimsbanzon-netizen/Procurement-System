@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantity } from '../domain/measurementUnits';
 import { emptyTableRow } from './shared/feedback';
 import { approveAmendment, rejectAmendment } from '../actions/amendmentActions';
 import { hasPermission } from '../domain/permissions';
@@ -45,7 +46,7 @@ export function renderAmendmentsView() {
                                     <td class="p-4 text-xs font-medium text-slate-800">${a.reason}</td>
                                     <td class="p-4 text-xs">
                                         <div class="font-semibold text-slate-800">${a.revisedSpecs}</div>
-                                        <div class="text-slate-500">Revised Qty: ${a.revisedQty} ${DB.orders.find(o=>o.id===a.poId)?.unit || 'units'}</div>
+                                        <div class="text-slate-500">Revised Qty: ${formatQuantity(a.revisedQty, DB.orders.find(o=>o.id===a.poId)?.unit)}</div>
                                     </td>
                                     <td class="p-4 text-xs text-slate-600">${a.supplierResponse || 'Awaiting supplier explanation'}</td>
                                     <td class="p-4">

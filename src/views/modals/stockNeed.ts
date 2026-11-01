@@ -1,3 +1,4 @@
+import { formatQuantity, displayUnit } from '../../domain/measurementUnits';
 // @ts-nocheck
 import { closeModal } from '../../actions/modalActions';
 import { getAvailableRequisitions } from '../../domain/procurement';
@@ -33,7 +34,7 @@ export function renderCreateStockNeedModal() {
 
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <div>
-                            <label id="sn-qty-label" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Target Quantity (${preferredPR?.unit || 'units'})</label>
+                            <label id="sn-qty-label" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Target Quantity (${displayUnit(preferredPR?.unit)})</label>
                             <input type="number" id="sn-qty" min="1" required readonly value="${preferredPR?.quantity || ''}" placeholder="Select request" class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                         <div>

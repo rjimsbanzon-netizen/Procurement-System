@@ -1,11 +1,12 @@
 // @ts-nocheck
+import { displayUnit } from '../../domain/measurementUnits';
 import { closeModal } from '../../actions/modalActions';
 import { DB, ui } from '../../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderInitiateAmendmentModal() {
     const order = DB.orders.find(item=>item.id===ui.selectedRecord?.poId);
-    const unit = order?.unit || 'units';
+    const unit = displayUnit(order?.unit);
     return `
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
             <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 border border-slate-200">

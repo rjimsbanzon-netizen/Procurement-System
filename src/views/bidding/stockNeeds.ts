@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantity } from '../../domain/measurementUnits';
 import { emptyPanel } from '../shared/feedback';
 import { getDeadline, deadlineIsOpen } from '../../services/sourcing';
 import { canManageBidding } from '../../domain/permissions';
@@ -52,7 +53,7 @@ export function renderStockNeedsView() {
                                         <span class="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-semibold">${sn.status}</span>
                                     </div>
                                     <div class="mt-3 bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs space-y-1">
-                                        <p><span class="font-semibold text-slate-700">Target Qty:</span> ${sn.targetQty} ${sn.unit || 'units'}</p>
+                                        <p><span class="font-semibold text-slate-700">Target Qty:</span> ${formatQuantity(sn.targetQty, sn.unit)}</p>
                                         <p><span class="font-semibold text-slate-700">Budget Cap:</span> ₱${(sn.budgetCap || 0).toLocaleString()}</p>
                                         <p><span class="font-semibold text-slate-700">Tech Specs:</span> ${sn.techSpecs}</p>
                                         <p class="font-semibold ${openForBids ? 'text-emerald-700' : 'text-amber-700'}">${!deadline ? 'Deadline not configured — bidding closed' : deadline.manuallyClosed ? 'Bidding manually closed' : openForBids ? `Bids accepted until ${new Date(deadline.closesAt).toLocaleString()}` : 'Submission deadline passed — bidding closed'}</p>

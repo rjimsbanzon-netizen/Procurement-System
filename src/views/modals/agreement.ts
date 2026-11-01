@@ -1,3 +1,4 @@
+import { displayUnit } from '../../domain/measurementUnits';
 // @ts-nocheck
 import { closeModal } from '../../actions/modalActions';
 import { DB, ui } from '../../store/state';
@@ -22,11 +23,11 @@ export function renderFinalizeAgreementModal() {
                     <p class="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs text-slate-600">Confirm the negotiated price, quantity, and requirements. The resulting Purchase Order will require the supplier's signature before delivery.</p>
                     <div class="grid grid-cols-2 gap-3">
                         <div>
-                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Agreed Unit Price (₱)</label>
+                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Agreed Price (₱ per ${displayUnit(need.unit)})</label>
                             <input type="number" id="agreement-unit-price" min="0" step="0.01" value="${bid.unitPrice}" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Agreed Quantity (${need.unit || 'units'})</label>
+                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Agreed Quantity (${displayUnit(need.unit)})</label>
                             <input type="number" id="agreement-quantity" min="1" value="${need.targetQty}" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                     </div>

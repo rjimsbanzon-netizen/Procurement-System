@@ -229,14 +229,24 @@ export async function handleOperationsRoutes(request:Request,env:Env,user:User,c
     await ensureInventory(env,data);
     const receipts=(await env.DB.prepare('SELECT * FROM verified_inventory_receipts WHERE active=1 ORDER BY department,item_title').all<Rec>()).results
       .filter(r=>permitted(user,r.department));
-    const bins=new Map<string,{department:string;itemTitle:string;specifications:string;quantity:number;receiptCount:number}>();
-    for(const r of receipts){
-      const key=JSON.stringify([r.department,r.item_title,r.specifications]);
-      const a=bins.get(key)||{department:String(r.department),itemTitle:String(r.item_title),specifications:String(r.specifications),quantity:0,receiptCount:0};
+    // Unit is sourced from the order/delivery in the shared procurement snapshot.
+    // Keep the existing D1 inventory tables intact. Never add kg, pcs, etc.
+    // together into one stock bin or metric.
+    const orderUnits=new Map(data.orders.map(order=>[String(order.id),clean(order.unit,30)||'units']));
+    const deliveryUnits=new Map(data.deliveries.map(delivery=>[
+      String(delivery.id),clean(delivery.unit,30)||orderUnits.get(String(delivery.poId))||'units'
+    ]));
+    const unitFor=(row:Rec)=>deliveryUnits.get(String(row.delivery_id))||orderUnits.get(String(row.po_id))||'units';
+    const receiptsWithUnits:Rec[]=receipts.map(row=>({...row,unit:unitFor(row)}));
+    const bins=new Map<string,{department:string;itemTitle:string;specifications:string;unit:string;quantity:number;receiptCount:number}>();
+    for(const r of receiptsWithUnits){
+      const key=JSON.stringify([r.department,r.item_title,r.specifications,r.unit]);
+      const a=bins.get(key)||{department:String(r.department),itemTitle:String(r.item_title),specifications:String(r.specifications),unit:r.unit,quantity:0,receiptCount:0};
       a.quantity+=n(r.quantity);a.receiptCount++;bins.set(key,a);
     }
-    const history=(await env.DB.prepare('SELECT * FROM verified_inventory_movements ORDER BY recorded_at DESC LIMIT 2000').all<Rec>()).results.filter(h=>permitted(user,h.department));
-    return json({stock:[...bins.values()].sort((a,b)=>a.department.localeCompare(b.department)||a.itemTitle.localeCompare(b.itemTitle)),receipts,history},200,cors);
+    const history=(await env.DB.prepare('SELECT * FROM verified_inventory_movements ORDER BY recorded_at DESC LIMIT 2000').all<Rec>()).results
+      .filter(h=>permitted(user,h.department)).map(h=>({...h,unit:unitFor(h)}));
+    return json({stock:[...bins.values()].sort((a,b)=>a.department.localeCompare(b.department)||a.itemTitle.localeCompare(b.itemTitle)||a.unit.localeCompare(b.unit)),receipts:receiptsWithUnits,history},200,cors);
   }
   if(path==='/operations/inventory/sync'&&request.method==='POST'){
     if(!isStaff(user))return json({error:'Staff only.'},403,cors);

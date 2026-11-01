@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantityRatio } from '../domain/measurementUnits';
 import { emptyTableRow } from './shared/feedback';
 import { openInitiateAmendmentModal, openInspectDeliveryModal } from '../actions/orderActions';
 import { canManageDeliveryIssues, hasPermission } from '../domain/permissions';
@@ -53,7 +54,7 @@ export function renderDeliveryView() {
                                     </td>
                                     <td class="p-4 font-medium">
                                         <span class="${d.deliveredQty < d.orderedQty ? 'text-amber-600 font-bold' : 'text-emerald-600'}">
-                                            ${d.deliveredQty} / ${d.orderedQty}
+                                            ${formatQuantityRatio(d.deliveredQty, d.orderedQty, d.unit || DB.orders.find(o=>o.id===d.poId)?.unit)}
                                         </span>
                                     </td>
                                     <td class="p-4 text-xs">

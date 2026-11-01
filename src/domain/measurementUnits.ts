@@ -112,3 +112,26 @@ export const measurementUnitOptionsHtml = (query = ''): string => searchMeasurem
   `<optgroup label="${group.label}">${group.units.map(unit =>
     `<option value="${unit.value}">${unit.label}</option>`).join('')}</optgroup>`
 ).join('');
+
+/** Display-only symbols for the stored 53-unit catalog. Do not use them in payloads. */
+const DISPLAY_SYMBOLS: Readonly<Record<string, string>> = {
+  sqcm: 'cm²', sqm: 'm²', sqft: 'ft²', cc: 'cm³', cbm: 'm³', ml: 'mL', l: 'L',
+};
+export function displayUnit(unit: unknown): string {
+  const value = unitLabel(unit);
+  return DISPLAY_SYMBOLS[value] || value;
+}
+/** Format a quantity and the selected unit together, including legacy records. */
+export function formatQuantity(quantity: number | string | null | undefined, unit: unknown): string {
+  const numberValue = Number(quantity);
+  const shown = quantity === null || quantity === undefined || quantity === '' ? '—' :
+    Number.isFinite(numberValue) ? numberValue.toLocaleString('en-PH', { maximumFractionDigits: 3 }) : '—';
+  return `${shown} ${displayUnit(unit)}`;
+}
+export function formatQuantityRatio(received: number | string, ordered: number | string, unit: unknown): string {
+  const format = (quantity: number | string) => {
+    const value = Number(quantity);
+    return Number.isFinite(value) ? value.toLocaleString('en-PH', { maximumFractionDigits: 3 }) : '—';
+  };
+  return `${format(received)} / ${format(ordered)} ${displayUnit(unit)}`;
+}

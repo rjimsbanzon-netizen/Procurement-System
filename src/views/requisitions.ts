@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantity } from '../domain/measurementUnits';
 import { openCreateStockNeedModal } from '../actions/biddingActions';
 import { approvePR, rejectPR, viewPRDetails } from '../actions/requisitionActions';
 import { canManageBidding, hasPermission } from '../domain/permissions';
@@ -56,7 +57,7 @@ export function renderRequisitionsView() {
                                     <td class="p-4">
                                         <div class="font-bold text-slate-900">${r.itemTitle}</div>
                                         <div class="text-xs text-slate-500 truncate max-w-xs" title="${r.specs}">${r.specs}</div>
-                                        <div class="text-xs text-slate-400 mt-1">Qty: ${r.quantity} ${r.unit || 'units'} &bull; Unit price: ₱${r.unitPrice}</div>
+                                        <div class="text-xs text-slate-400 mt-1">Qty: ${formatQuantity(r.quantity, r.unit)} &bull; Unit price: ₱${r.unitPrice}</div>
                                     </td>
                                     <td class="p-4">${r.targetDate}</td>
                                     <td class="p-4 text-right font-bold text-slate-900">₱${(r.totalCost || 0).toLocaleString()}</td>

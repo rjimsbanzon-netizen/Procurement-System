@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { unitLabel, isQuantityUnit, measurementUnitOptionsHtml } from '../domain/measurementUnits';
+import { unitLabel, displayUnit, isQuantityUnit, measurementUnitOptionsHtml } from '../domain/measurementUnits';
 import { requestInput } from '../services/actionDialogs';
 import { respondToAmendment } from '../actions/amendmentActions';
 import { cancelProposalMeeting, canRequestMeetingReschedule, canReviewMeetingReschedule, canRescheduleProposalMeeting } from '../actions/biddingActions';
@@ -108,7 +108,7 @@ export function attachMainEvents() {
             const snUnit = document.getElementById('sn-unit') as HTMLInputElement | null;
             if (snUnit) snUnit.value = pr?.unit || 'units';
             const snQtyLabel = document.getElementById('sn-qty-label');
-            if (snQtyLabel) snQtyLabel.textContent = `Target Quantity (${pr?.unit || 'units'})`;
+            if (snQtyLabel) snQtyLabel.textContent = `Target Quantity (${displayUnit(pr?.unit)})`;
             document.getElementById('sn-budget').value = pr?.totalCost || '';
             document.getElementById('sn-specs').value = pr?.specs || '';
         });
@@ -146,6 +146,15 @@ export function attachMainEvents() {
     // Searchable units on the legacy PR modal. Select a result to save its stable code.
     const unitSearch = document.getElementById('pr-unit-search') as HTMLInputElement | null;
     const unitSelect = document.getElementById('pr-unit') as HTMLSelectElement | null;
+    const updateUnitLabels = () => {
+        const unit = displayUnit(unitSelect?.value);
+        const qtyLabel = document.getElementById('pr-qty-label');
+        const priceLabel = document.getElementById('pr-price-label');
+        if (qtyLabel) qtyLabel.textContent = `Quantity (${unit})`;
+        if (priceLabel) priceLabel.textContent = `Est. Price (₱ per ${unit})`;
+    };
+    unitSelect?.addEventListener('change', updateUnitLabels);
+    updateUnitLabels();
     if (unitSearch && unitSelect) {
         const allUnits = measurementUnitOptionsHtml();
         const filterUnits = () => {
@@ -272,7 +281,7 @@ export function attachMainEvents() {
                 DB.deliveries.unshift(newDel);
                 const payment = DB.payments.find(item => item.poId === order.id);
                 if (payment) payment.deliveryVerified = false;
-                logAudit('Delivery Recorded', `Shipment recorded for PO ${order.id}. Qty: ${qtyDelivered}`);
+                logAudit('Delivery Recorded', `Shipment recorded for PO ${order.id}. Qty: ${qtyDelivered} ${displayUnit(order.unit)}`);
                 Storage.save(DB);
                 showToast(`Delivery logged for ${order.id}.`, 'success');
                 closeModal();

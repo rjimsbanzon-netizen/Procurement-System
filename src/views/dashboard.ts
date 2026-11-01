@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { formatQuantity } from '../domain/measurementUnits';
 import { emptyTableRow } from './shared/feedback';
 import { navigateTo } from '../core/renderBridge';
 import { hasPermission } from '../domain/permissions';
@@ -165,7 +166,7 @@ export function renderDashboardView() {
                                     <tr class="hover:bg-slate-50/80">
                                         <td class="p-4 font-bold text-sky-600">${request.id}</td>
                                         <td class="p-4 font-medium text-slate-900">${request.itemTitle}</td>
-                                        <td class="p-4">${request.quantity}</td>
+                                        <td class="p-4">${formatQuantity(request.quantity, request.unit)}</td>
                                         <td class="p-4">${request.targetDate || '—'}</td>
                                         <td class="p-4 text-right font-semibold text-slate-900">₱${(request.totalCost || 0).toLocaleString()}</td>
                                         <td class="p-4">${renderPRStatusBadge(request.status)}</td>

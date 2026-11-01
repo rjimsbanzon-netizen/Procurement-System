@@ -1,3 +1,4 @@
+import { formatQuantity } from '../domain/measurementUnits';
 import { jsPDF } from 'jspdf';
 import { DB } from '../store/state';
 import type { ProcurementRecord } from '../types/procurement';
@@ -30,25 +31,25 @@ function buildLines(type: PrintableType, record: ProcurementRecord): { sections:
     case 'PR': return {
       sections: [
         ['REQUEST DETAILS', [['Reference number', record.id], ['Department', record.department], ['Requested by', record.requestedBy], ['Date requested', record.createdAt], ['Needed by', record.targetDate], ['Status', record.status]]],
-        ['ITEMS & JUSTIFICATION', [['Item / Description', record.itemTitle], ['Specifications', record.specs], ['Quantity', `${record.quantity} ${record.unit || 'units'}`], ['Estimated unit cost', money(record.unitPrice)], ['Estimated total', money(record.totalCost)], ['Purpose / Remarks', record.remarks]]],
+        ['ITEMS & JUSTIFICATION', [['Item / Description', record.itemTitle], ['Specifications', record.specs], ['Quantity', formatQuantity(record.quantity, record.unit)], ['Estimated unit cost', money(record.unitPrice)], ['Estimated total', money(record.totalCost)], ['Purpose / Remarks', record.remarks]]],
       ], signers: ['Requested by', 'Reviewed by', 'Approved by'],
     };
     case 'PO': return {
       sections: [
         ['ORDER INFORMATION', [['PO number', record.id], ['PR reference', record.prId], ['Supplier', record.supplierName], ['Department', record.department], ['Date issued', record.poDate], ['Status', record.status]]],
-        ['ORDER DETAILS', [['Item', record.itemTitle], ['Specifications', record.specs], ['Quantity', `${record.quantity} ${record.unit || 'units'}`], ['Agreed unit price', money(record.unitPrice ?? (Number(record.totalCost || 0) / (Number(record.quantity) || 1)))], ['Total amount', money(record.totalCost)], ['Terms', record.agreedTerms]]],
+        ['ORDER DETAILS', [['Item', record.itemTitle], ['Specifications', record.specs], ['Quantity', formatQuantity(record.quantity, record.unit)], ['Agreed unit price', money(record.unitPrice ?? (Number(record.totalCost || 0) / (Number(record.quantity) || 1)))], ['Total amount', money(record.totalCost)], ['Terms', record.agreedTerms]]],
       ], signers: ['Prepared by', 'Authorized by', 'Supplier acknowledgment'],
     };
     case 'AGREEMENT': return {
       sections: [
         ['PARTIES & REFERENCE', [['Agreement reference', `AGR-${record.id}`], ['Linked purchase order', record.id], ['Purchaser / Department', requisition?.department || record.department], ['Supplier', record.supplierName], ['Date of order', record.poDate]]],
-        ['AGREED PROCUREMENT TERMS', [['Goods / Services', record.itemTitle], ['Specifications', record.specs], ['Agreed quantity', record.quantity], ['Agreed price', money(record.totalCost)], ['Negotiated terms', record.agreedTerms || 'See signed agreement / PO attachments']]],
+        ['AGREED PROCUREMENT TERMS', [['Goods / Services', record.itemTitle], ['Specifications', record.specs], ['Agreed quantity', formatQuantity(record.quantity, record.unit)], ['Agreed price', money(record.totalCost)], ['Negotiated terms', record.agreedTerms || 'See signed agreement / PO attachments']]],
       ], signers: ['Procurement representative', 'Supplier representative'],
     };
     case 'INSPECTION': return {
       sections: [
         ['DELIVERY INFORMATION', [['Inspection / Delivery ref', record.id], ['PO reference', record.poId], ['Supplier', record.supplierName], ['Item', record.itemTitle || order?.itemTitle], ['Date delivered', record.actualDate], ['Status', record.deliveryStatus]]],
-        ['INSPECTION RESULT', [['Quantity ordered', record.orderedQty], ['Quantity received', record.deliveredQty], ['Compliance status', record.complianceStatus], ['Inspection notes', record.remarks], ['Recorded by', record.recordedBy]]],
+        ['INSPECTION RESULT', [['Quantity ordered', formatQuantity(record.orderedQty, record.unit || order?.unit)], ['Quantity received', formatQuantity(record.deliveredQty, record.unit || order?.unit)], ['Compliance status', record.complianceStatus], ['Inspection notes', record.remarks], ['Recorded by', record.recordedBy]]],
       ], signers: ['Inspected by', 'Verified by'],
     };
     case 'PAYMENT': return {

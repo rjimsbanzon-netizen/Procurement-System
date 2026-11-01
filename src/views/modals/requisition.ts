@@ -25,7 +25,7 @@ export function renderCreatePRModal() {
 
                     <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
                         <div>
-                            <label for="pr-qty" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Quantity</label>
+                            <label for="pr-qty" id="pr-qty-label" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Quantity (units)</label>
                             <input type="number" id="pr-qty" min="1" step="1" value="1" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                         <div>
@@ -36,7 +36,7 @@ export function renderCreatePRModal() {
                             </select>
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Est. Unit Price (₱ PHP)</label>
+                            <label id="pr-price-label" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Est. Price (₱ per units)</label>
                             <input type="number" id="pr-price" min="0" step="0.01" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                         <div>
