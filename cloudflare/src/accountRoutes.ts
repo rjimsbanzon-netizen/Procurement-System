@@ -3,11 +3,10 @@
  * supplies the identity and D1 checks both sides of every conversation.
  */
 import type { D1Database } from '@cloudflare/workers-types';
+import { gmailSenderConfigured, sendGmailVerificationCode, type GmailSenderEnv } from './gmailDelivery';
 
-type Env = {
+type Env = GmailSenderEnv & {
   DB: D1Database;
-  RESEND_API_KEY?: string;
-  VERIFICATION_FROM_EMAIL?: string;
 };
 type Identity = { id: string; username: string; email: string; name: string; role: string };
 type Row = Record<string, unknown>;
@@ -43,7 +42,6 @@ function publicPositions(person: Row, appointments: Appointment[]): string[] {
   const positions = new Set<string>();
   if (person.app_role === 'Procurement Head' && dept === 'procurement') positions.add('Procurement Head');
   if (person.app_role === 'Procurement Officer' && dept === 'procurement') positions.add('Procurement Officer');
-  if (person.app_role === 'Operations Officer' && dept === 'operations') positions.add('Operations Officer');
   for (const item of appointments) {
     if (item.user_id !== person.id) continue;
     if (item.step_role === 'Finance Officer' && item.department === '*' && isFinance(dept)) {
@@ -51,7 +49,6 @@ function publicPositions(person: Row, appointments: Appointment[]): string[] {
     } else if (item.step_role === 'Department Head' && normDept(item.department) === dept) {
       if (isFinance(dept)) positions.add('Finance Head');
       else if (dept === 'procurement' && person.app_role === 'Procurement Head') positions.add('Procurement Head');
-      else if (dept === 'operations') positions.add('Operations Head');
       else if (dept && dept !== 'procurement' && dept !== 'executive') positions.add('Department Head');
     }
   }
@@ -96,7 +93,10 @@ export async function handleAccountRoutes(request: Request, env: Env, me: Identi
       FROM users WHERE id=?`).bind(me.id).first<Row>();
     if (!row) return reply({ error: 'Profile not found.' }, 404, cors);
     return reply({ profile: { ...cleanPerson(row), email: row.email,
-      requestedPosition: row.app_role === 'Supplier' ? 'Supplier' : row.requested_position, emailVerified: Boolean(row.email_verified_at) } }, 200, cors);
+      requestedPosition: row.app_role === 'Supplier' ? 'Supplier' : row.requested_position,
+      emailVerified: Boolean(row.email_verified_at),
+      // Capability flag only. Never expose the sender credentials to the browser.
+      emailDeliveryConfigured: gmailSenderConfigured(env) } }, 200, cors);
   }
 
   if (path === '/account/profile' && request.method === 'PUT') {
@@ -142,8 +142,8 @@ export async function handleAccountRoutes(request: Request, env: Env, me: Identi
     const body = (await request.json()) as Row;
     const email = str(body.email).toLowerCase();
     if (!validEmail(email)) return reply({error:'Enter a valid email address.'},400,cors);
-    if (!env.RESEND_API_KEY || !env.VERIFICATION_FROM_EMAIL) {
-      return reply({error:'Email verification is not configured. Admin must set RESEND_API_KEY and VERIFICATION_FROM_EMAIL on the Worker.'},503,cors);
+    if (!gmailSenderConfigured(env)) {
+      return reply({error:'Email verification is not configured. Admin must set the Gmail OAuth secrets on the Worker.'},503,cors);
     }
     const already = await env.DB.prepare(`SELECT id FROM users WHERE lower(email)=? AND id!=?`)
       .bind(email,me.id).first();
@@ -153,19 +153,15 @@ export async function handleAccountRoutes(request: Request, env: Env, me: Identi
       .bind(me.id).first<{created_at:number}>();
     if (recent && now - recent.created_at < 60) return reply({error:'Please wait one minute before requesting another code.'},429,cors);
     const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6,'0');
-    const hash = await sha256(`${me.id}:${email}:${code}:${env.RESEND_API_KEY}`);
+    const hash = await sha256(`${me.id}:${email}:${code}:${env.EMAIL_CODE_HASH_SECRET}`);
     await env.DB.prepare(`INSERT INTO account_email_verifications(user_id,pending_email,code_hash,created_at,expires_at,attempts)
       VALUES(?,?,?,?,?,0) ON CONFLICT(user_id) DO UPDATE SET pending_email=excluded.pending_email,
       code_hash=excluded.code_hash,created_at=excluded.created_at,expires_at=excluded.expires_at,attempts=0`)
       .bind(me.id,email,hash,now,now+600).run();
-    const sent = await fetch('https://api.resend.com/emails', {
-      method: 'POST', headers: { Authorization:`Bearer ${env.RESEND_API_KEY}`, 'Content-Type':'application/json' },
-      body: JSON.stringify({ from:env.VERIFICATION_FROM_EMAIL,to:[email],subject:'ProcureFlow email verification code',
-        text:`Your ProcureFlow verification code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.` })
-    }).catch(() => null);
-    if (!sent?.ok) {
+    const sent = await sendGmailVerificationCode(env, email, code);
+    if (!sent) {
       await env.DB.prepare('DELETE FROM account_email_verifications WHERE user_id=? AND code_hash=?').bind(me.id,hash).run();
-      return reply({error:'Verification email could not be delivered. Check the mail provider configuration.'},502,cors);
+      return reply({error:'Verification email could not be sent through Gmail. Check OAuth authorization and Worker secrets.'},502,cors);
     }
     return reply({ok:true,message:'Code sent. Check your email.'},200,cors);
   }
@@ -178,7 +174,7 @@ export async function handleAccountRoutes(request: Request, env: Env, me: Identi
       .bind(me.id).first<{pending_email:string;code_hash:string;expires_at:number;attempts:number}>();
     const now = Math.floor(Date.now()/1000);
     if (!pending || pending.expires_at <= now || pending.attempts >= 5) return reply({error:'Code expired or attempts exhausted. Request a new code.'},400,cors);
-    const hash = await sha256(`${me.id}:${pending.pending_email}:${code}:${env.RESEND_API_KEY || ''}`);
+    const hash = await sha256(`${me.id}:${pending.pending_email}:${code}:${env.EMAIL_CODE_HASH_SECRET || ''}`);
     if (hash !== pending.code_hash) {
       await env.DB.prepare('UPDATE account_email_verifications SET attempts=attempts+1 WHERE user_id=?')
         .bind(me.id).run();
