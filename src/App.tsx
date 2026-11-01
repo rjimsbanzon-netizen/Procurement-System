@@ -90,6 +90,7 @@ function CurrentPage() {
 
 export default function App() {
   const [revision, trigger] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     registerRenderListener(() => trigger(n => n + 1));
@@ -100,23 +101,42 @@ export default function App() {
     return () => registerRenderListener(null);
   }, []);
 
-  // Re-bind existing form handlers to the DOM on every React commit (as the
-  // original application did after replacing the page's HTML).
+  // The mobile drawer is independent of the procurement navigation and keeps
+  // the existing role-based routes unchanged.
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    };
+    const closeOnDesktop = () => {
+      if (window.innerWidth >= 1024) setMobileMenuOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    window.addEventListener('resize', closeOnDesktop);
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('resize', closeOnDesktop);
+    };
+  }, [mobileMenuOpen]);
+
+  // Re-bind legacy form handlers only when the procurement screen changes.
+  // Opening the navigation drawer must not attach duplicate event listeners.
   useEffect(() => {
     if (DB.currentUser) attachMainEvents();
     else attachAuthEvents();
-  });
+  }, [revision]);
 
   return <>
     {DB.currentUser ?
       <div key={revision} className="enterprise-shell flex h-screen min-h-0 bg-slate-100 overflow-hidden">
-        <Sidebar />
+        {mobileMenuOpen && <button type="button" className="pf-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)} />}
+        <Sidebar isMobileOpen={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
-          <Header />
-          <main className="enterprise-main flex-1 min-h-0 overflow-y-auto p-4 md:p-6 bg-slate-50 custom-scrollbar"><CurrentPage /></main>
+          <Header onOpenMenu={() => setMobileMenuOpen(true)} isMenuOpen={mobileMenuOpen} />
+          <main id="procureflow-content" className="enterprise-main flex-1 min-w-0 min-h-0 overflow-y-auto p-4 md:p-6 bg-slate-50 custom-scrollbar"><CurrentPage /></main>
         </div>
         <ModalHost />
-        <MobileQuickActions />
+        <MobileQuickActions isMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
       </div>  : <div key={revision}><AuthScreen /></div>}
     <ActionDialogHost />
     <div id="toast-container" className="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none" />

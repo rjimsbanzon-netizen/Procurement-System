@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { DB, ui } from '../store/state';
 import { canAccessTab } from '../domain/permissions';
 import { navigateTo } from '../core/renderBridge';
@@ -128,12 +128,12 @@ const supplierSections: NavSection[] = [
   }
 ];
 
-function NavButton({ id, label, icon, badge }: { id: string; label: string; icon: string; badge?: number | null }) {
+function NavButton({ id, label, icon, badge, onNavigate }: { id: string; label: string; icon: string; badge?: number | null; onNavigate: () => void }) {
   const active = ui.currentTab === id;
   return (
     <button
       key={id}
-      onClick={() => navigateTo(id)}
+      onClick={() => { onNavigate(); navigateTo(id); }}
       type="button"
       className={
         'sidebar-nav-button w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ' +
@@ -151,9 +151,10 @@ function NavButton({ id, label, icon, badge }: { id: string; label: string; icon
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ isMobileOpen, onClose }: { isMobileOpen: boolean; onClose: () => void }) {
   const user = DB.currentUser;
   const navRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const scrollKey = String(user?.id ?? user?.username ?? 'anonymous');
 
   // Restore before paint: React's key={revision} in App.tsx remounts this
@@ -163,6 +164,26 @@ export function Sidebar() {
       navRef.current.scrollTop = savedSidebarScroll.get(scrollKey) ?? 0;
     }
   }, [scrollKey]);
+  useEffect(() => {
+    if (!isMobileOpen || window.innerWidth >= 1024) return;
+    closeButtonRef.current?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const drawer = document.getElementById('procureflow-sidebar');
+      if (!drawer) return;
+      const controls = Array.from(drawer.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]'));
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener('keydown', trapFocus);
+    return () => document.removeEventListener('keydown', trapFocus);
+  }, [isMobileOpen]);
   const notifications = getNotifications();
   const unread = getUnreadCount(notifications, user);
   const sections = (user?.role === 'Supplier' ? supplierSections : employeeSections)
@@ -173,7 +194,7 @@ export function Sidebar() {
     .filter(section => section.items.length > 0);
 
   return (
-    <aside className="enterprise-sidebar w-[17rem] h-full min-h-0 bg-slate-900 text-slate-300 flex flex-col justify-between shrink-0 overflow-hidden shadow-xl">
+    <aside id="procureflow-sidebar" aria-label="Main navigation" role={isMobileOpen ? 'dialog' : undefined} aria-modal={isMobileOpen ? true : undefined} className={'enterprise-sidebar pf-nav-drawer w-[17rem] h-full min-h-0 bg-slate-900 text-slate-300 flex flex-col justify-between shrink-0 overflow-hidden shadow-xl' + (isMobileOpen ? ' pf-nav-open' : '')}>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="sidebar-brand px-5 py-5 flex items-center gap-3 border-b border-slate-800">
           <div className="sidebar-mark">
@@ -183,6 +204,7 @@ export function Sidebar() {
             <div className="font-bold text-white text-[1.55rem] leading-none">ProcureFlow</div>
             <div className="text-sm text-slate-300 leading-tight mt-1">Enterprise</div>
           </div>
+          <button ref={closeButtonRef} type="button" onClick={onClose} className="pf-drawer-close" aria-label="Close navigation menu"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
         </div>
 
         <nav
@@ -195,7 +217,7 @@ export function Sidebar() {
               <div className="sidebar-section-label">{section.title}</div>
               <div className="mt-2 flex flex-col gap-1.5">
                 {section.items.map(([id, label, icon]) => (
-                  <NavButton key={id} id={id} label={label} icon={icon} badge={id === 'notifications' ? unread : null} />
+                  <NavButton key={id} id={id} label={label} icon={icon} badge={id === 'notifications' ? unread : null} onNavigate={onClose} />
                 ))}
               </div>
             </div>
