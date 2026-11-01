@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { DB } from '../store/state';
+import { ownsRequisition } from './ownerIdentity';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function getAvailableRequisitions() {
@@ -63,12 +64,5 @@ export function getSupplierRatingStats(supplierId) {
 
 
 export function getCurrentUserRequisitions() {
-    const username = DB.currentUser.username;
-    const name = DB.currentUser.name;
-
-    return DB.requisitions.filter(request =>
-        username
-            ? request.requestedByUsername === username
-            : !request.requestedByUsername && request.requestedBy === name
-    );
+    return DB.requisitions.filter(request => ownsRequisition(request, DB.currentUser));
 }

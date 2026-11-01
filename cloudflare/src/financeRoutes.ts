@@ -1,6 +1,7 @@
 /** ProcureFlow features 6–8. Additive, authenticated D1 routes; no user-role migration. */
 import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
-import { actingDelegation } from './delegationRoutes';
+import { actingDelegation, principalFor, philippinesToday } from './delegationRoutes';
+import { evidenceStatement } from './auditEvidenceRoutes';
 
 export interface FinanceEnv { DB: D1Database; DOCUMENTS: KVNamespace }
 export interface FinanceUser {
@@ -64,8 +65,12 @@ async function assignedFinanceHead(env: FinanceEnv): Promise<Row | null> {
        AND LOWER(TRIM(a.department)) IN ('finance & accounting','finance and accounting','finance')
      ORDER BY a.updated_at DESC LIMIT 1`).first<Row>();
 }
-const activeFinanceEmployee=(row:Row|null|undefined):boolean=>Boolean(row && row.role==='employee' &&
-  row.app_role==='Employee' && row.status==='approved' && !row.access_revoked && isFinanceDepartment(row.department));
+/** An existing account can have a legacy explicit Finance job role or a base
+ * Employee role. Neither title authorizes anything without the corresponding
+ * appointment in finance_approvers (validated by every caller). */
+const activeFinanceEmployee=(row:Row|null|undefined,duty:'Finance Officer'|'Finance Head'):boolean=>Boolean(
+  row && row.role==='employee' && (row.app_role==='Employee' || row.app_role===duty) &&
+  row.status==='approved' && !row.access_revoked && isFinanceDepartment(row.department));
 
 function reply(value: unknown, status = 200, cors: HeadersInit = {}): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json', ...cors } });
@@ -131,7 +136,7 @@ async function canApproveStep(env:FinanceEnv,user:FinanceUser,role:string,depart
     const row=await env.DB.prepare("SELECT a.user_id,u.role,u.app_role,u.department,u.status,u.access_revoked FROM finance_approvers a JOIN users u ON a.user_id=u.id WHERE a.step_role='Finance Officer' AND a.department='*' AND a.user_id=?")
       .bind(user.id).first<Row>();
     const head=await assignedFinanceHead(env);
-    return Boolean(row?.user_id===user.id && activeFinanceEmployee(row) && head?.user_id!==user.id);
+    return Boolean(row?.user_id===user.id && activeFinanceEmployee(row,'Finance Officer') && head?.user_id!==user.id);
   }
   const row=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE step_role=? AND department=?').bind(role,department).first<{user_id:string}>();
   return row?.user_id===user.id;
@@ -190,11 +195,55 @@ async function paymentAuthority(env:FinanceEnv,user:FinanceUser,poValue:unknown)
   if(head&&officer&&head.user_id===officer.user_id)return deny('Finance Head and Finance Officer must be assigned to different employees.');
   const selected=headRequired?head:officer;
   if(!selected)return deny(`No ${requiredRole} is assigned. Admin must appoint one in Staff Assignments.`);
-  if(!activeFinanceEmployee(selected))return deny(`The assigned ${requiredRole} is not an active Finance & Accounting employee.`);
-  if(user.id!==selected.user_id)return deny(`This payment is reserved for the assigned ${requiredRole}.`);
+  if(!activeFinanceEmployee(selected,requiredRole))return deny(`The assigned ${requiredRole} is not an active Finance & Accounting employee.`);
+  // An approved, currently valid substitute for the required Finance role
+  // has the SAME threshold-limited payment authority as its primary approver.
+  // The delegation validator re-checks the primary appointment, delegate
+  // eligibility, revocation, dates and separation of Finance duties in D1.
+  if(user.id!==selected.user_id){
+    const acting=await actingDelegation(env,{...user,status:'approved',access_revoked:0},requiredRole);
+    if(!acting||acting.primary_user_id!==selected.user_id){
+      // The invoice screen supplies a precise explanation when the Finance
+      // Officer's primary assignment changed after a delegation was approved.
+      if(requiredRole==='Finance Officer'){
+        const reviewer=await invoiceReviewerAuthority(env,user);
+        return deny(reviewer.reason||`Only the assigned ${requiredRole} or their active substitute may pay this PO.`);
+      }
+      return deny(`This payment is reserved for the assigned ${requiredRole} or their active authorized substitute.`);
+    }
+  }
   return {allowed:true,requiredRole,threshold:amount(threshold),reason:''};
 }
 
+/** One server-backed explanation for both the Invoice page and the invoice list.
+ * A date-stamped delegation is not enough when its primary appointment changed.
+ */
+async function invoiceReviewerAuthority(env:FinanceEnv,user:FinanceUser):Promise<{
+  allowed:boolean;acting:boolean;validUntil:string|null;reason:string;
+}> {
+  if(user.role==='admin')return {allowed:false,acting:false,validUntil:null,reason:'Admin can review invoices but may not confirm a Finance match.'};
+  const allowed=await canApproveStep(env,user,'Finance Officer','*');
+  const active=allowed?await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Finance Officer'):null;
+  if(allowed)return {allowed:true,acting:Boolean(active),validUntil:active?.ends_on??null,reason:''};
+  if(user.role==='guest')return {allowed:false,acting:false,validUntil:null,reason:'Supplier accounts cannot confirm Finance invoice matches.'};
+  const previous=await env.DB.prepare(`SELECT d.primary_user_id,d.review_status,d.starts_on,d.ends_on,d.revoked_at,u.name AS primary_name
+    FROM approval_delegations d LEFT JOIN users u ON u.id=d.primary_user_id
+    WHERE d.delegate_user_id=? AND d.step_role='Finance Officer' ORDER BY d.created_at DESC LIMIT 1`)
+    .bind(user.id).first<Row>();
+  const current=await principalFor(env,'Finance Officer');
+  const today=philippinesToday();
+  let reason='Only the currently appointed Finance Officer or their active, approved substitute may confirm an invoice match.';
+  if(previous){
+    if(previous.review_status!=='Approved') reason=`Your Finance Officer delegation is ${String(previous.review_status).toLowerCase()}, not approved.`;
+    else if(previous.revoked_at) reason='Your Finance Officer delegation has been revoked.';
+    else if(previous.starts_on>today) reason=`Your Finance Officer delegation starts on ${previous.starts_on} (Philippine date).`;
+    else if(previous.ends_on<today) reason=`Your Finance Officer delegation expired on ${previous.ends_on} (Philippine date).`;
+    else if(!current) reason='Your delegation cannot be used because no Finance Officer is currently appointed. Admin must assign a primary officer.';
+    else if(current.id!==previous.primary_user_id) reason=`Your delegation covered ${previous.primary_name||'a previous Finance Officer'}, but the primary Finance Officer appointment has changed. Admin must review or replace the delegation.`;
+    else reason='The delegation is recorded, but a current eligibility or separation-of-duties check failed. Admin should review Staff Assignments and Approval Delegation.';
+  } else if(!current)reason='No Finance Officer is assigned. Admin must appoint one in Staff Assignments.';
+  return {allowed:false,acting:false,validUntil:null,reason};
+}
 function canSeeInvoice(user:FinanceUser,inv:Row) { return user.role!=='guest' || same(user.company_name,inv.supplier_name); }
 export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:FinanceUser,cors:HeadersInit):Promise<Response|null> {
   const path = new URL(request.url).pathname;
@@ -306,7 +355,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     if(typeof body.userId!=='string'||!body.userId||!department)return reply({error:'Select an employee and department.'},400,cors);
     const canonical=await knownDepartment(env,department);
     if(!canonical)return reply({error:'Select an existing department, or create one first.'},400,cors);
-    const target=await env.DB.prepare('SELECT id,username,app_role,department,status,access_revoked,role FROM users WHERE id=?').bind(body.userId).first<Row>();
+    const target=await env.DB.prepare('SELECT id,username,username_aliases,app_role,department,status,access_revoked,role FROM users WHERE id=?').bind(body.userId).first<Row>();
     if(!target||target.role!=='employee'||target.app_role!=='Employee'||target.status!=='approved'||target.access_revoked)
       return reply({error:'Only an active regular Employee may transfer departments. Reassign a Head before moving them.'},403,cors);
     const appointed=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE user_id=? LIMIT 1').bind(body.userId).first();
@@ -315,10 +364,51 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       .bind(body.userId).first();
     if(pendingApproval)return reply({error:'The employee has a pending approval workflow. Complete it before transferring them.'},409,cors);
     const {data}=await snapshot(env);
-    if(data.requisitions.some(pr=>pr.status==='Pending' && same(pr.requestedByUsername,target.username)))
+    let historicalUsernames:string[]=[];
+    try { const aliases=JSON.parse(String(target.username_aliases||'[]')); if(Array.isArray(aliases)) historicalUsernames=aliases.filter((x:unknown):x is string=>typeof x==='string'); }catch{/* Legacy account */}
+    if(data.requisitions.some(pr=>pr.status==='Pending' &&
+      (same(pr.requestedByUsername,target.username)||historicalUsernames.some(alias=>same(pr.requestedByUsername,alias)))))
       return reply({error:'This employee has a pending requisition. Complete or reassign it before changing their department.'},409,cors);
     await env.DB.prepare("UPDATE users SET department=?,updated_at=datetime('now') WHERE id=?").bind(canonical,body.userId).run();
     return reply({ok:true},200,cors);
+  }
+
+  // Procurement Officer is an explicit operational account role (not a
+  // finance_approvers appointment). Only approved regular Procurement staff
+  // can be promoted. Demotion removes the role but preserves user/history.
+  if(path==='/finance/staff/procurement-officer'&&method==='PUT') {
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json().catch(()=>null) as Row|null;
+    const userId=typeof body?.userId==='string'?body.userId.trim():'';
+    const action=body?.action;
+    if(!userId || !['appoint','remove'].includes(action))
+      return reply({error:'Select a staff account and choose appoint or remove.'},400,cors);
+    if(userId===user.id)return reply({error:'Admin cannot change their own procurement role.'},403,cors);
+    const target=await env.DB.prepare('SELECT id,name,role,app_role,department,status,access_revoked FROM users WHERE id=?')
+      .bind(userId).first<Row>();
+    if(!target || target.role!=='employee' || target.status!=='approved' || target.access_revoked)
+      return reply({error:'Only active, approved staff accounts may be appointed.'},403,cors);
+    const appoint=action==='appoint';
+    if(appoint && (target.app_role!=='Employee'||!same(target.department,'Procurement')))
+      return reply({error:'Select an approved Employee whose department is Procurement. Transfer the employee to Procurement first, if necessary.'},409,cors);
+    if(!appoint && target.app_role!=='Procurement Officer')
+      return reply({error:'This account is not currently a Procurement Officer. Refresh Staff Assignments.'},409,cors);
+    if(appoint){
+      const assigned=await env.DB.prepare('SELECT step_role FROM finance_approvers WHERE user_id=? LIMIT 1')
+        .bind(userId).first<Row>();
+      if(assigned)return reply({error:'Remove or reassign this employee’s Head or Finance responsibility before appointing them as Procurement Officer.'},409,cors);
+    }
+    const previousRole=appoint?'Employee':'Procurement Officer';
+    const nextRole=appoint?'Procurement Officer':'Employee';
+    const results=await env.DB.batch([
+      env.DB.prepare("UPDATE users SET app_role=?,updated_at=datetime('now') WHERE id=? AND role='employee' AND app_role=? AND status='approved' AND access_revoked=0")
+        .bind(nextRole,userId,previousRole),
+      evidenceStatement(env,user,'users',userId,appoint?'Procurement Officer appointed':'Procurement Officer removed',
+        {name:target.name,app_role:previousRole,department:target.department},
+        {name:target.name,app_role:nextRole,department:target.department})
+    ]);
+    if(results[0]?.meta.changes!==1)return reply({error:'Account changed on another device. Refresh Staff Assignments and retry.'},409,cors);
+    return reply({ok:true,userId,appRole:nextRole},200,cors);
   }
 
   // Only Admin may correct the saved home department of an
@@ -339,7 +429,14 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   }
   if(path==='/finance/settings'&&method==='GET') {
     if(!staff)return reply({error:'Staff access required.'},403,cors);
-    return reply(await approverSettings(env),200,cors);
+    // The Invoice Matching UI must use exactly the same effective authorization
+    // as POST /finance/invoices/:id/match, including active approved delegations.
+    // Assignment records alone do not describe acting Finance Officers.
+    const verification=await invoiceReviewerAuthority(env,user);
+    return reply({
+      ...await approverSettings(env),
+      invoiceVerification:verification
+    },200,cors);
   }
   if(path==='/finance/settings'&&method==='PUT') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
@@ -377,9 +474,14 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     if(!department)return reply({error:'Choose a registered department in Staff Assignments.'},400,cors);
     const target=await env.DB.prepare('SELECT id,role,app_role,department,status,access_revoked FROM users WHERE id=?').bind(body.userId).first<Row>();
     const isProcurementHead=body.role==='Department Head'&&same(department,'Procurement');
+    // Existing sites may contain legacy explicit Finance Officer/Head account
+    // titles. An Admin can formally appoint the matching Finance duty, but
+    // the title alone never grants approval privileges.
+    const matchingLegacyFinanceRole=(body.role==='Finance Officer'&&target?.app_role==='Finance Officer') ||
+      (body.role==='Department Head'&&isFinanceDepartment(department)&&target?.app_role==='Finance Head');
     if(!target||target.role!=='employee'||target.status!=='approved'||target.access_revoked ||
-      (target.app_role!=='Employee'&&!(isProcurementHead&&target.app_role==='Procurement Head')))
-      return reply({error:'Choose an active Employee from the selected department. A current Procurement Head may be reselected for Procurement.'},400,cors);
+      (target.app_role!=='Employee'&&!matchingLegacyFinanceRole&&!(isProcurementHead&&target.app_role==='Procurement Head')))
+      return reply({error:'Select an active employee with a compatible department and Finance appointment role.'},400,cors);
     if(body.role==='Finance Officer' && !isFinanceDepartment(target.department))
       return reply({error:'Finance Officer must be an active employee from Finance & Accounting.'},400,cors);
     if(body.role==='Department Head' && !(isFinanceDepartment(department)
@@ -455,7 +557,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       const officer=await env.DB.prepare(`SELECT a.user_id,u.role,u.app_role,u.department,u.status,u.access_revoked
           FROM finance_approvers a JOIN users u ON u.id=a.user_id
           WHERE a.step_role='Finance Officer' AND a.department='*'`).first<Row>();
-      if(!activeFinanceEmployee(head)||!activeFinanceEmployee(officer)||head?.user_id===officer?.user_id)
+      if(!activeFinanceEmployee(head,'Finance Head')||!activeFinanceEmployee(officer,'Finance Officer')||head?.user_id===officer?.user_id)
         return reply({error:'High-value PR requires a distinct eligible Finance Officer and Finance Head. Configure both in Staff Assignments.'},409,cors);
       if(head?.user_id===departmentHead.user_id)
         return reply({error:'Finance Head cannot authorize a PR they submitted. Assign an independent Finance Head or change the requester.'},409,cors);
@@ -527,7 +629,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       return reply({error:'Valid Finance Head decision required; rejection must include a reason.'},400,cors);
     const head=await assignedFinanceHead(env);
     const delegatedHead=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Finance Head');
-    if((!activeFinanceEmployee(head)||head?.user_id!==user.id) && !delegatedHead)
+    if((!activeFinanceEmployee(head,'Finance Head')||head?.user_id!==user.id) && !delegatedHead)
       return reply({error:'Only the assigned Finance Head or their active authorized delegate may review this high-value PR.'},403,cors);
     const requestRow=await env.DB.prepare('SELECT * FROM pr_approval_requests WHERE pr_id=?').bind(prId).first<Row>();
     const signoff=await env.DB.prepare('SELECT status FROM finance_head_signoffs WHERE pr_id=?').bind(prId).first<Row>();
@@ -587,9 +689,12 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     return reply({ok:true,prId,status:'Pending',nextApprover:step.step_role},200,cors);
   }
   if(path==='/finance/invoices'&&method==='GET') {
+    const reviewer=staff?await invoiceReviewerAuthority(env,user):null;
     const invoiceStaff=admin || ['Procurement Head','Procurement Officer'].includes(user.app_role) ||
-      (staff && await canApproveStep(env,user,'Finance Officer','*'));
-    if(!invoiceStaff && user.role!=='guest')return reply({invoices:[]},200,cors);
+      Boolean(reviewer?.allowed);
+    // Never disguise a permission failure as "0 invoices". The old response
+    // made employees think supplier invoices had disappeared from cloud D1.
+    if(!invoiceStaff && user.role!=='guest')return reply({error:reviewer?.reason||'Finance invoice access requires an active assignment or delegation.',code:'INVOICE_ACCESS_DENIED'},403,cors);
     const {data}=await snapshot(env);
     const invoices=(await env.DB.prepare('SELECT * FROM supplier_invoices ORDER BY submitted_at DESC').all<Row>()).results.filter(i=>canSeeInvoice(user,i));
     return reply({invoices:invoices.map(i=>({id:i.id,poId:i.po_id,supplierName:i.supplier_name,invoiceNo:i.invoice_number,amount:amount(i.amount_cents),invoiceDate:i.invoice_date,documentId:i.document_id,status:i.status,submittedAt:i.submitted_at,matchedAt:i.matched_at,reasons:inspectInvoice(data,i).reasons}))},200,cors);

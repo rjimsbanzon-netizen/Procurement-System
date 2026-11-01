@@ -6,6 +6,7 @@ import { Storage } from './storage';
 import { showToast } from './toast';
 import { DB, setDB, ui } from '../store/state';
 import { normalizeMatrix } from '../domain/accessMatrix';
+import {clearActingResponsibilities,setActingResponsibilities} from '../domain/effectiveDelegation';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export const CLOUD_TOKEN_KEY = 'procurement_enterprise_token';
@@ -58,6 +59,9 @@ export function mapCloudUser(user, suppliers = []) {
     return {
         id: user.id,
         username: user.username,
+        requestedPosition: user.requested_position || 'Employee',
+        usernameAliases: Array.isArray(user.usernameAliases) ? user.usernameAliases : (() => { try { return JSON.parse(user.username_aliases || '[]'); } catch { return []; } })(),
+        nameAliases: Array.isArray(user.nameAliases) ? user.nameAliases : (() => { try { return JSON.parse(user.name_aliases || '[]'); } catch { return []; } })(),
         name: user.name,
         email: user.email,
         role,
@@ -106,9 +110,35 @@ export function applyCloudState(data, user, users = [user], accessControl = null
 }
 
 
+/** Synchronize time-bound delegated capabilities from the authenticated Worker.
+ * The response is trusted for UI hints only; the Worker rechecks every mutation.
+ */
+// Discard older concurrent refresh responses. A delayed response must never
+// reinstate acting-role UI after a newer revocation check has cleared it.
+let delegationRefreshSequence = 0;
+export async function refreshActiveDelegationAccess() {
+    const requestSequence = ++delegationRefreshSequence;
+    const user = DB.currentUser;
+    if (!CLOUD_API_BASE || !user || user.role === 'Admin' || user.role === 'Supplier') {
+        return clearActingResponsibilities();
+    }
+    try {
+        const result = await cloudRequest('/delegations');
+        if (requestSequence !== delegationRefreshSequence || DB.currentUser?.id !== user.id) return false;
+        return setActingResponsibilities(user.id, result);
+    } catch (error) {
+        // Missing cloud confirmation must remove acting-role UI, not leave a
+        // previously approved delegation available in local permissions.
+        if (requestSequence !== delegationRefreshSequence || DB.currentUser?.id !== user.id) return false;
+        return clearActingResponsibilities();
+    }
+}
+
 export async function restoreCloudSession() {
     const token = localStorage.getItem(CLOUD_TOKEN_KEY);
     if (!token) {
+        delegationRefreshSequence++;
+        clearActingResponsibilities();
         localStorage.removeItem(CLOUD_TOKEN_KEY);
         localStorage.removeItem(CLOUD_USERNAME_KEY);
         renderApp();
@@ -125,8 +155,11 @@ export async function restoreCloudSession() {
         const user = mapCloudUser(account, snapshot.data?.suppliers || []);
         const users = account.role === 'admin' ? await cloudRequest('/users') : [account];
         applyCloudState(snapshot.data, user, users, accessControl);
+        await refreshActiveDelegationAccess();
         renderApp();
     } catch (error) {
+        delegationRefreshSequence++;
+        clearActingResponsibilities();
         localStorage.removeItem(CLOUD_TOKEN_KEY);
         localStorage.removeItem(CLOUD_USERNAME_KEY);
         setDB(Storage.empty());
@@ -143,13 +176,13 @@ export async function signInToCloud(username, password) {
         body: JSON.stringify({ username, password })
     }, null);
     if (response.pending) {
-        throw new Error('Your registration is awaiting Admin verification.');
+        throw new Error('Your registration is awaiting administrator verification.');
     }
     if (response.rejected) {
         throw new Error('This account was rejected. Choose Register Account and resubmit using the same username, email, and password.');
     }
     if (response.accessRevoked) {
-        throw new Error('Access to this account has been revoked. Contact Admin.');
+        throw new Error('Access to this account has been revoked. Contact an administrator.');
     }
     if (!response.user || !response.token) {
         throw new Error('Invalid username or password.');
@@ -167,6 +200,7 @@ export async function signInToCloud(username, password) {
         localStorage.setItem(CLOUD_TOKEN_KEY, response.token);
         localStorage.setItem(CLOUD_USERNAME_KEY, user.username);
         applyCloudState(snapshot.data, user, users, accessControl);
+        await refreshActiveDelegationAccess();
     } catch (error) {
         localStorage.removeItem(CLOUD_TOKEN_KEY);
         localStorage.removeItem(CLOUD_USERNAME_KEY);
@@ -187,8 +221,8 @@ export async function registerCloudAccount(account) {
     }, null);
     showToast(
         response.reapplied
-            ? 'Your registration has been resubmitted for Admin review.'
-            : 'Registration submitted. Admin must verify your account before you can sign in.',
+            ? 'Your registration has been resubmitted for administrator review.'
+            : 'Registration submitted. An administrator must verify your account before you can sign in.',
         'success'
     );
     ui.authMode = 'login';

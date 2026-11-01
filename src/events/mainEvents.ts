@@ -10,6 +10,7 @@ import { canManageBidding, canManageDeliveryIssues, getAgreementFinalizationErro
 import { getAvailableRequisitions, getRemainingOrderQuantity, isOrderFullyVerified } from '../domain/procurement';
 import { logAudit } from '../services/audit';
 import { CLOUD_API_BASE, CLOUD_RECORD_COLLECTIONS, CLOUD_TOKEN_KEY, CLOUD_USERNAME_KEY, cloudRequest } from '../services/cloud';
+import { submitSecureBid } from '../services/sourcing';
 import { validateSupplierQuotationTerms, type SupplierQuotationTerms } from '../domain/bidTerms';
 import { Storage } from '../services/storage';
 import { showToast } from '../services/toast';
@@ -342,7 +343,12 @@ export function attachMainEvents() {
             const method = document.getElementById('pay-method').value;
             const ref = document.getElementById('pay-ref').value.trim();
 
-            if (hasPermission('process_payment') && payment && payment.status === 'Pending' &&
+            // Cloud payments are authorized per PO by /finance/payment-authority.
+            // Do not block an approved acting Finance Officer/Head using the
+            // permanent-role matrix; the Worker also validates the final write.
+            const locallyPermitted = hasPermission('process_payment');
+            const mayAttempt = CLOUD_API_BASE ? DB.currentUser?.role !== 'Supplier' : locallyPermitted;
+            if (mayAttempt && payment && payment.status === 'Pending' &&
                 isOrderFullyVerified(payment.poId) && method && ref) {
                 // Verify against the server immediately before changing any payment record.
                 if (CLOUD_API_BASE) {
@@ -482,7 +488,7 @@ export function attachMainEvents() {
                 ? `₱${(unitPrice * (need?.targetQty || 0)).toLocaleString()}`
                 : 'Enter a valid unit price';
         });
-        submitBidForm.addEventListener('submit', (e) => {
+        submitBidForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const supplier = DB.suppliers.find(s => s.id === DB.currentUser.supplierId);
             const unitPrice = Number(document.getElementById('bid-unit-price').value);
@@ -520,10 +526,6 @@ export function attachMainEvents() {
                 showToast('Your account is missing its supplier profile. Contact Admin to link your company profile.', 'error');
                 return;
             }
-            if (DB.bids.some(item => item.needId === need.id && item.supplierId === supplier.id)) {
-                showToast('Your company has already submitted a bid for this procurement need.', 'error');
-                return;
-            }
             if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
                 showToast('Enter a valid offered unit price in Philippine pesos.', 'error');
                 return;
@@ -538,25 +540,90 @@ export function attachMainEvents() {
                 return;
             }
 
-            const newBid = {
-                id: 'BID-' + (3000 + DB.bids.length + 1),
-                needId: need.id,
-                supplierId: supplier.id,
-                supplierName: supplier.name,
-                unitPrice,
-                totalCost: unitPrice * need.targetQty,
-                leadTimeDays,
-                notes: notes || quotationTerms.offeredModel,
-                quotationTerms,
-                submittedAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
-                status: 'Submitted'
-            };
+            // The browser is NOT an authority for submitted bids. Use the secured
+            // endpoint and wait for the Worker to confirm the transaction. In
+            // particular, never create a BID-* record locally and send it through
+            // /enterprise-state (the Worker deliberately rejects that route).
+            const submitButton = submitBidForm.querySelector('button[type="submit"]');
+            if (submitButton?.disabled) return;
+            const originalLabel = submitButton?.textContent;
+            if (submitButton) {
+                submitButton.disabled = true;
+                submitButton.textContent = 'Submitting securely…';
+            }
+            try {
+                if (!CLOUD_API_BASE || !localStorage.getItem(CLOUD_TOKEN_KEY)) {
+                    throw new Error('Please sign in to the connected procurement portal to submit a quotation.');
+                }
 
-            DB.bids.unshift(newBid);
-            logAudit('Bid Submitted', `Supplier ${supplier.name} submitted bid for ${need.id}`);
-            Storage.save(DB);
-            showToast(`Bid submitted successfully for ${need.title}!`, 'success');
-            closeModal();
+                // Drain previous writes before the secured POST. Old client
+                // versions may have queued a forbidden local bid creation; that
+                // known error must not block retrying the *correct* API.
+                try {
+                    await Storage.flush();
+                } catch (syncError) {
+                    const reason = syncError instanceof Error ? syncError.message : String(syncError);
+                    if (!reason.includes('New bids must use the secured /sourcing/bids endpoint')) {
+                        throw new Error(`Other workspace changes failed to synchronize: ${reason}`);
+                    }
+                }
+
+                // A green "Bid Submitted" card may be a legacy optimistic local
+                // record. Check D1, not DB.bids, before disallowing duplicates.
+                const before = await cloudRequest('/enterprise-state');
+                const cloudBids = before?.data?.bids;
+                if (!Array.isArray(cloudBids)) {
+                    throw new Error('Could not confirm existing bids from the server. Please refresh and try again.');
+                }
+                const alreadySubmitted = cloudBids.find(item => item.needId === need.id &&
+                    (item.supplierId === supplier.id ||
+                     String(item.supplierName || '').toLowerCase() === String(supplier.name || '').toLowerCase()));
+                if (alreadySubmitted) {
+                    DB.bids = cloudBids;
+                    localStorage.setItem('eprocurement_db', JSON.stringify(DB));
+                    closeModal();
+                    showToast(`Your company's bid ${alreadySubmitted.id} is already saved for ${need.title}.`, 'info');
+                    return;
+                }
+
+                const { bid: savedBid } = await submitSecureBid({
+                    needId: need.id,
+                    unitPrice,
+                    leadTimeDays,
+                    notes: notes || quotationTerms.offeredModel,
+                    quotationTerms
+                });
+                if (!savedBid || !savedBid.id || savedBid.needId !== need.id) {
+                    throw new Error('The server did not return a confirmed bid. Refresh and check your submissions.');
+                }
+
+                // Once POST succeeds, use the server-generated bid ID. Keep the
+                // latest server data in memory WITHOUT triggering another PUT.
+                DB.bids = [savedBid, ...DB.bids.filter(item => item.id !== savedBid.id &&
+                    !(item.needId === savedBid.needId && item.supplierId === savedBid.supplierId))];
+                try {
+                    const after = await cloudRequest('/enterprise-state');
+                    if (Array.isArray(after?.data?.bids) &&
+                        after.data.bids.some(item => item.id === savedBid.id)) {
+                        for (const collection of CLOUD_RECORD_COLLECTIONS) {
+                            if (Array.isArray(after.data[collection])) DB[collection] = after.data[collection];
+                        }
+                    }
+                } catch (refreshError) {
+                    console.warn('Bid was confirmed, but the workspace refresh failed.', refreshError);
+                }
+                localStorage.setItem('eprocurement_db', JSON.stringify(DB));
+                closeModal();
+                showToast(`Bid ${savedBid.id} submitted and confirmed for ${need.title}!`, 'success');
+            } catch (submitError) {
+                const reason = submitError instanceof Error ? submitError.message : String(submitError);
+                showToast(`Bid not confirmed: ${reason}`, 'error');
+            } finally {
+                if (submitButton?.isConnected) {
+                    submitButton.disabled = false;
+                    submitButton.textContent = originalLabel || 'Submit Quotation & Clauses';
+                }
+            }
         });
     }
 

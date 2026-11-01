@@ -1,7 +1,8 @@
+import { ownsRequisition } from '../../domain/ownerIdentity';
 import { DB } from '../../store/state';
 import { getDeadline } from '../../services/sourcing';
 import type { ProcurementRecord, ProcurementState, User } from '../../types/procurement';
-import { getCloudNotificationSnapshot, getCloudMessageAlerts, getCloudContractAlerts, getCloudDelegationAlerts, getCloudReadIds, queueCloudNotificationRead } from './cloudNotificationSync';
+import { getCloudNotificationSnapshot, getCloudMessageAlerts, getCloudDirectMessageAlerts, getCloudContractAlerts, getCloudDelegationAlerts, getCloudReadIds, queueCloudNotificationRead } from './cloudNotificationSync';
 
 /**
  * Notifications are derived from existing procurement records.
@@ -26,9 +27,7 @@ export interface ProcurementNotification {
 
 const KEY_PREFIX = 'procureflow_read_notifications_v1_';
 const asString = (value: unknown): string => typeof value === 'string' ? value : '';
-const isOwner = (record: ProcurementRecord, user: User) =>
-  Boolean(record.requestedByUsername && user.username && record.requestedByUsername === user.username) ||
-  (!record.requestedByUsername && record.requestedBy === user.name);
+const isOwner = (record: ProcurementRecord, user: User) => ownsRequisition(record,user);
 
 function userKey(user: User): string {
   return `${KEY_PREFIX}${encodeURIComponent(String(user.id || user.username))}`;
@@ -361,6 +360,21 @@ export function getNotifications(state: ProcurementState = DB, user: User | null
         description:`${d.step_role}${d.department?` (${d.department})`:''} coverage ended ${d.ends_on}. Original assignments apply again.`,
         createdAt:d.ends_on+'T23:59:59',kind:'info',targetTab:'approval_delegation',targetRecordId:d.id});
     }
+  });
+
+  // Private one-to-one messages: only the recipient's authenticated D1 inbox
+  // provides these alerts. Never expose private message bodies in the bell or
+  // notification center; opening the alert navigates directly to the sender.
+  getCloudDirectMessageAlerts(user).forEach(message => {
+    add({
+      id: `direct-message:${message.id}`,
+      title: 'New private message',
+      description: `${message.senderName} sent you a private message.`,
+      createdAt: message.createdAt,
+      kind: 'action',
+      targetTab: 'people_messages',
+      targetRecordId: message.senderId,
+    });
   });
 
   // Cloudflare messages become ordinary read/unread alerts. The Worker has

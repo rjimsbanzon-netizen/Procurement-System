@@ -22,12 +22,14 @@ export function attachAuthEvents() {
         accountTypeSelect.addEventListener('change', (e) => {
             const type = e.target.value;
             const deptContainer = document.getElementById('dept-field-container');
+            const positionContainer = document.getElementById('position-field-container');
             const supplierSelectContainer = document.getElementById('supplier-select-container');
             const companyContainer = document.getElementById('cloud-supplier-company-container');
             const companyInput = document.getElementById('auth-supplier-company');
 
             if (type === 'Supplier') {
                 deptContainer.classList.add('hidden');
+                positionContainer?.classList.add('hidden');
                 if (CLOUD_API_BASE) {
                     supplierSelectContainer.classList.add('hidden');
                     companyContainer?.classList.remove('hidden');
@@ -37,6 +39,7 @@ export function attachAuthEvents() {
                 }
             } else {
                 deptContainer.classList.remove('hidden');
+                positionContainer?.classList.remove('hidden');
                 supplierSelectContainer.classList.add('hidden');
                 document.getElementById('new-supplier-name-container')?.classList.add('hidden');
                 companyContainer?.classList.add('hidden');
@@ -73,7 +76,8 @@ export function attachAuthEvents() {
                         email: document.getElementById('auth-email').value.trim(),
                         accountType: document.getElementById('auth-account-type').value === 'Supplier' ? 'supplier' : 'employee',
                         department: document.getElementById('auth-dept').value,
-                        companyName: document.getElementById('auth-supplier-company')?.value.trim() || ''
+                        companyName: document.getElementById('auth-supplier-company')?.value.trim() || '',
+                        requestedPosition: document.getElementById('auth-requested-position')?.value || 'Employee'
                     });
                 } catch (error) {
                     showToast(error instanceof Error ? error.message : 'Cloud registration failed.', 'error');
@@ -136,7 +140,8 @@ export function attachAuthEvents() {
                     department: dept,
                     role: accountType === 'Supplier' ? 'Supplier' : 'Employee',
                     supplierId: assignedSupplierId,
-                    status: 'Pending Verification'
+                    status: 'Pending Verification',
+                    requestedPosition: accountType === 'Supplier' ? 'Supplier' : (document.getElementById('auth-requested-position')?.value || 'Employee')
                 };
 
                 DB.users.push(newUser);

@@ -1,5 +1,6 @@
 import { CLOUD_API_BASE, CLOUD_TOKEN_KEY, cloudRequest } from './cloud';
 import { DB } from '../store/state';
+import { ownsRequisition } from '../domain/ownerIdentity';
 import type { ProcurementRecord } from '../types/procurement';
 import type { DocumentCategory, DocumentEntityType, ProcurementDocument } from '../types/documents';
 
@@ -14,11 +15,7 @@ type SavedDocument = { id: string; document: ProcurementDocument; blob: Blob };
 
 function currentRole() { return DB.currentUser?.role; }
 function ownerIsMe(record: ProcurementRecord): boolean {
-  const user = DB.currentUser;
-  return Boolean(user && (
-    record.requestedByUsername === user.username ||
-    (record.requestedBy === user.name && !record.requestedByUsername)
-  ));
+  return ownsRequisition(record, DB.currentUser);
 }
 
 export function canReadEntity(type: DocumentEntityType, id: string): boolean {

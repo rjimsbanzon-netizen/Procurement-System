@@ -10,6 +10,9 @@ export type Permission =
 export interface User {
   id: string;
   username: string;
+  usernameAliases?: string[];
+  nameAliases?: string[];
+  requestedPosition?: string;
   name: string;
   role: Role;
   department: string;

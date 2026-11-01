@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { getRenderVersion, subscribeRender } from '../core/renderBridge';
 import { DB } from '../store/state';
+import { ownsRequisition } from '../domain/ownerIdentity';
 import type { OrderRecord, RequisitionRecord, User, SupplierRecord, DeliveryRecord } from '../types/procurement';
 
 /** Imperative actions call renderApp() after data changes; subscribe without polling.
@@ -19,9 +20,7 @@ export function useRequisitions(scope: 'all' | 'mine' | 'visible' = 'visible'): 
   if (!user) return [];
   if (user.role === 'Supplier') return [];
   if (scope === 'all' || (scope === 'visible' && user.role !== 'Employee')) return DB.requisitions;
-  return DB.requisitions.filter(req =>
-    user.username ? req.requestedByUsername === user.username :
-    !req.requestedByUsername && req.requestedBy === user.name);
+  return DB.requisitions.filter(req => ownsRequisition(req,user));
 }
 
 export function useOrders(scope: 'all' | 'visible' = 'visible'): OrderRecord[] {

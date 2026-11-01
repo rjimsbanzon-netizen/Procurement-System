@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
+import { ownsRequisition } from '../domain/ownerIdentity';
 import { DB, ui } from '../store/state';
 import { renderApp, navigateTo } from '../core/renderBridge';
 import { CLOUD_API_BASE } from '../services/cloud';
@@ -22,8 +23,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const canEdit = Boolean(existing && !CLOUD_API_BASE && existing.status === 'Pending' &&
-    ((existing.requestedByUsername && existing.requestedByUsername === DB.currentUser?.username) ||
-      (!existing.requestedByUsername && existing.requestedBy === DB.currentUser?.name)));
+    ownsRequisition(existing,DB.currentUser));
   const permitted = editId ? canEdit : hasPermission('create_pr');
 
   useEffect(() => {

@@ -113,6 +113,65 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
  const admin=user.role==='admin';
  if(!admin&&!eligible(user))return json({error:'Only active staff approvers or Admin may use approval delegation.'},403,cors);
 
+ // Admin-only account-level access overview. It reports validated, effective
+ // responsibilities, NOT a new authorization mechanism. Every sensitive action
+ // continues to be checked by its own secured workflow endpoint.
+ if(path==='/delegations/effective-access'&&request.method==='GET'){
+  if(!admin)return json({error:'Admin access is required.'},403,cors);
+  const accounts=(await env.DB.prepare(`SELECT id,username,name,role,app_role,department,status,access_revoked
+    FROM users ORDER BY name COLLATE NOCASE`).all<Row>()).results;
+  const appointments=(await env.DB.prepare(`SELECT a.user_id,a.step_role,a.department
+    FROM finance_approvers a`).all<Row>()).results;
+  const today=philippinesToday();
+  const candidateDelegations=(await env.DB.prepare(`SELECT id,delegate_user_id,primary_user_id,step_role,department,
+    starts_on,ends_on FROM approval_delegations
+    WHERE review_status='Approved' AND revoked_at IS NULL AND starts_on<=? AND ends_on>=?`)
+    .bind(today,today).all<Row>()).results;
+  const active=new Map<string,Row[]>();
+  // A date-matching record is not sufficient: the principal must still be
+  // appointed, and the substitute must still meet all security rules.
+  for(const record of candidateDelegations){
+   const target=accounts.find(a=>a.id===record.delegate_user_id);
+   if(!target||!eligible(target))continue;
+   const scope=record.step_role==='Department Head'?String(record.department):'';
+   const valid=await actingDelegation(env,target as DelegationUser,record.step_role,scope);
+   if(valid?.id!==record.id)continue;
+   const list=active.get(target.id)??[];list.push(record);active.set(target.id,list);
+  }
+  const describe=(role:string,department:string)=>role==='Department Head'
+   ?`Submit requisitions for ${department} only`
+   :role==='Procurement Head'?'Approve the assigned Procurement Head requisition step'
+   :role==='Finance Officer'?'Finance Officer requisition review, invoice matching and payment below the Finance Head threshold'
+   :'Finance Head sign-off and high-value payment at or above the threshold';
+  const result=accounts.map(account=>{
+   const usable=account.status==='approved'&&!account.access_revoked;
+   const base=account.role==='admin'?'Admin':account.role==='guest'?'Supplier':
+     account.app_role==='Procurement Head'?'Procurement Head':
+     account.app_role==='Procurement Officer'?'Procurement Officer':'Employee';
+   const roles:Row[]=[{role:base,source:'Account role',department:account.department??'',startsOn:null,endsOn:null,
+     capability:'Permanent account role; detailed rights come from the Access Control matrix.'}];
+   if(usable&&account.role==='employee'){
+    const mine=appointments.filter(a=>a.user_id===account.id);
+    const financeHead=mine.some(a=>a.step_role==='Department Head'&&finance(a.department)&&finance(account.department));
+    const financeOfficer=mine.some(a=>a.step_role==='Finance Officer'&&a.department==='*'&&finance(account.department));
+    if(account.app_role==='Employee'&&!(financeHead&&financeOfficer)){
+     for(const duty of mine){
+      let position:string|null=null;
+      if(duty.step_role==='Finance Officer'&&financeOfficer)position='Finance Officer';
+      else if(duty.step_role==='Department Head'&&finance(duty.department)&&financeHead)position='Finance Head';
+      else if(duty.step_role==='Department Head'&&isOrdinaryDepartment(duty.department)&&match(account.department,duty.department))position='Department Head';
+      if(position)roles.push({role:position,source:'Staff appointment',department:position==='Department Head'?duty.department:'Finance & Accounting',startsOn:null,endsOn:null,capability:describe(position,duty.department)});
+     }
+    }
+    for(const duty of active.get(account.id)??[])roles.push({role:duty.step_role,source:'Active delegation',department:duty.department??'',startsOn:duty.starts_on,endsOn:duty.ends_on,capability:describe(duty.step_role,duty.department)});
+   }
+   return {id:account.id,username:account.username,name:account.name,department:account.department,
+    accountRole:base,status:account.status,accessRevoked:Boolean(account.access_revoked),
+    active:usable,roles:usable?roles:[]};
+  });
+  return json({asOf:today,accounts:result},200,cors);
+ }
+
  if(path==='/delegations'&&request.method==='GET'){
   const rows=(await env.DB.prepare(`SELECT d.*,p.name AS primary_name,g.name AS delegate_name,
     c.name AS submitted_by_name FROM approval_delegations d
@@ -130,7 +189,19 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
   const principals=admin?principalRecords:principalRecords.filter(x=>x.user?.id===user.id);
   const canRequest=admin||principals.length>0;
   const staff=canRequest?(await env.DB.prepare("SELECT id,name,role,app_role,department,status,access_revoked FROM users WHERE status='approved' AND access_revoked=0 AND role='employee' ORDER BY name").all<Row>()).results:[];
-  return json({delegations:visible,activeRoles,activeDepartments,staff,principals,canRequest},200,cors);
+  // Use exactly the same eligibility rule as POST /delegations. The old UI
+  // independently guessed which accounts qualified and could be misleading.
+  // Keep primary/department appointments authoritative and never permit
+  // the principal to choose themselves as the substitute.
+  const principalsWithEligibility=await Promise.all(principals.map(async assignment=>{
+    if(!assignment.user||!validPrincipal(assignment.user,assignment.role,assignment.department))
+      return {...assignment,eligibleStaffIds:[] as string[]};
+    const ids=await Promise.all(staff.map(async candidate=>(
+      await validDelegate(env,candidate,assignment.role,assignment.user!.id,assignment.department)
+    )?String(candidate.id):null));
+    return {...assignment,eligibleStaffIds:ids.filter((id):id is string=>id!==null)};
+  }));
+  return json({delegations:visible,activeRoles,activeDepartments,staff,principals:principalsWithEligibility,canRequest},200,cors);
  }
 
  if(path==='/delegations'&&request.method==='POST'){

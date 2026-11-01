@@ -1,3 +1,4 @@
+import { ownsRequisition } from '../domain/ownerIdentity';
 import { EmptyState } from '../components/FeedbackState';
 import {useEffect,useMemo,useState} from 'react';
 import {DB} from '../store/state';
@@ -79,7 +80,7 @@ export default function GlobalSearchPage(){
   if(!canAccessTab(r.tab))return false;
   if(full)return true;
   if(role==='Department Head')return norm(r.department)===norm(me?.department);
-  if(r.type==='Purchase Requisition')return DB.requisitions.some(p=>p.id===r.id&&(p.requestedByUsername===me?.username||p.requestedBy===me?.name));
+  if(r.type==='Purchase Requisition')return DB.requisitions.some(p=>p.id===r.id&&ownsRequisition(p,me));
   return false;
  });
  const distinct=(key:'supplier'|'department'|'status'|'type')=>[...new Set(scoped.map(r=>r[key]).filter(s=>s && s!=='—'))].sort((a,b)=>a.localeCompare(b));

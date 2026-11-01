@@ -33,6 +33,7 @@ export default function StaffAssignmentsPage(){
   const [department,setDepartment]=useState('');
   const [userId,setUserId]=useState('');
   const [newDepartment,setNewDepartment]=useState('');
+  const [officerUserId,setOfficerUserId]=useState('');
   const [transferUser,setTransferUser]=useState('');
   const [transferDepartment,setTransferDepartment]=useState('');
   const [busy,setBusy]=useState(false);
@@ -56,7 +57,7 @@ export default function StaffAssignmentsPage(){
   },[admin]);
   useEffect(()=>{void reload()},[reload]);
 
-  if(!admin)return <div className="rounded-lg border bg-white p-5 text-rose-700">Admin access required.</div>;
+  if(!admin)return <div className="rounded-lg border bg-white p-5 text-rose-700">Administrator access required.</div>;
   const assignments=settings?.assignments??[];
   const saved=savedDuty(duty,department);
   const current=assignments.find(a=>a.step_role===saved.role && same(a.department,saved.department));
@@ -75,6 +76,8 @@ export default function StaffAssignmentsPage(){
   const hasConflict=Boolean(financeHead&&financeOfficer&&financeHead.user_id===financeOfficer.user_id);
   const currentFinanceInvalid=financeOfficer&&!people.some(p=>p.id===financeOfficer.user_id&&p.app_role==='Employee'&&isFinanceDepartment(p.department));
   const mismatchedProcurementHeads=people.filter(p=>p.app_role==='Procurement Head'&&!same(p.department,'Procurement'));
+  const procurementOfficers=people.filter(p=>p.app_role==='Procurement Officer');
+  const eligibleOfficers=people.filter(p=>p.app_role==='Employee'&&same(p.department,'Procurement')&&!assignments.some(a=>a.user_id===p.id));
 
   async function operate(action:()=>Promise<unknown>,success:string){
     setBusy(true);setError('');setMessage('');
@@ -130,6 +133,27 @@ export default function StaffAssignmentsPage(){
       setTransferUser('');setTransferDepartment('');
     },`${person.name} is now assigned to ${transferDepartment}.`);
   }
+  async function appointProcurementOfficer(event:FormEvent){
+    event.preventDefault();
+    const person=eligibleOfficers.find(p=>p.id===officerUserId);
+    if(!person){setError('Choose an approved, active Employee from Procurement.');return;}
+    if(!await confirmAction({
+      title:'Appoint Procurement Officer',
+      message:`Appoint ${person.name} as Procurement Officer? This is an operational procurement role with access to sourcing, delivery and other staff actions. They may be selected as a substitute for the Procurement Head when a delegation is approved.`,
+      tone:'warning',confirmText:'Appoint officer'
+    }))return;
+    void operate(async()=>{await financeAPI.setProcurementOfficer(person.id,'appoint');setOfficerUserId('');},
+      `${person.name} was appointed Procurement Officer. Their new role will appear when they refresh or sign in again.`);
+  }
+  async function removeProcurementOfficer(person:Person){
+    if(!await confirmAction({
+      title:'Remove Procurement Officer',
+      message:`Return ${person.name} to Employee? Their Procurement Officer permissions and eligibility as a Procurement Head delegate will end. Active delegated approvals may require a new substitute.`,
+      tone:'warning',confirmText:'Remove officer role'
+    }))return;
+    void operate(()=>financeAPI.setProcurementOfficer(person.id,'remove'),`${person.name} is now a regular Procurement Employee.`);
+  }
+
   async function correctProcurementHead(person:Person){
     if(!await confirmAction({title:'Correct Procurement department',message:`Correct ${person.name}'s saved department to Procurement? Historical PRs remain unchanged.`,tone:'warning',confirmText:'Correct department'}))return;
     void operate(()=>financeAPI.correctProcurementDepartment(person.id),`${person.name}'s home department is now Procurement.`);
@@ -173,6 +197,31 @@ export default function StaffAssignmentsPage(){
       {current&&<p className="text-sm text-slate-600">Currently assigned: <strong>{current.name}</strong>. Select a different employee to replace them.</p>}
       <button type="submit" disabled={busy||!userId||(duty==='Department Head'&&!department)} className="rounded-lg bg-[#a64f32] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy?'Saving…':duty==='Finance Officer'?'Save Finance Officer':duty==='Finance Head'?'Save Finance Head':'Save Department Head'}</button>
     </form>
+
+    <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4" aria-label="Procurement Officer appointments">
+      <div>
+        <h3 className="font-bold text-slate-900">Procurement Officers</h3>
+        <p className="mt-1 text-sm text-slate-500">Appoint approved employees from the Procurement department as Procurement Officers. This is a staff account role, not a Department Head assignment. Officers can be chosen as a Procurement Head substitute when an authorized delegation is active.</p>
+      </div>
+      <form onSubmit={appointProcurementOfficer} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="min-w-0 flex-1 text-sm font-semibold">Eligible Procurement employee
+          <select className="mt-1 block w-full rounded-lg border border-slate-300 bg-white p-2.5 font-normal" value={officerUserId} onChange={e=>setOfficerUserId(e.target.value)} required>
+            <option value="">Choose an approved Procurement employee</option>
+            {eligibleOfficers.map(p=><option key={p.id} value={p.id}>{p.name} (@{p.username})</option>)}
+          </select>
+        </label>
+        <button type="submit" disabled={busy||!eligibleOfficers.some(p=>p.id===officerUserId)} className="rounded-lg bg-[#a64f32] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy?'Saving…':'Appoint Procurement Officer'}</button>
+      </form>
+      {eligibleOfficers.length===0&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">No eligible Procurement Employee is available. In User Verification, approve an Employee account first. If their department is different, use <strong>Transfer an employee to another department</strong> below to move them to Procurement; then return here to appoint them.</p>}
+      <div className="border-t border-slate-100 pt-4">
+        <h4 className="mb-3 text-sm font-bold text-slate-700">Currently appointed officers ({procurementOfficers.length})</h4>
+        {procurementOfficers.length===0?<p className="text-sm text-slate-500">No Procurement Officers have been appointed yet.</p>:
+          <div className="grid gap-2 md:grid-cols-2">{procurementOfficers.map(person=><div key={person.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3 text-sm">
+            <div className="min-w-0"><div className="font-semibold text-slate-900">{person.name}</div><div className="break-all text-xs text-slate-500">@{person.username} · {person.department}</div></div>
+            <button type="button" disabled={busy} onClick={()=>void removeProcurementOfficer(person)} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50">Remove officer role</button>
+          </div>)}</div>}
+      </div>
+    </section>
 
     <section className="rounded-xl border bg-white p-5 space-y-4">
       <div><h3 className="font-bold">Manage departments</h3><p className="text-sm text-slate-500 mt-1">Add departments, rename departments not used in procurement history, or remove an unused department. Procurement, Finance &amp; Accounting, and Executive are reserved department names for system workflows.</p></div>

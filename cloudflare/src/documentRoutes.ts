@@ -9,7 +9,7 @@ type Entity = 'PR' | 'BID' | 'PO' | 'DEL' | 'PAY';
 type DataRecord = Record<string, unknown>;
 type Snapshot = Record<string, DataRecord[]>;
 type Identity = { id: string; name: string; role: 'admin' | 'employee' | 'guest'; };
-type Profile = { app_role: string; company_name: string; status: string; access_revoked: number; username: string; };
+type Profile = { app_role: string; company_name: string; status: string; access_revoked: number; username: string; username_aliases: string; name_aliases: string; };
 type Context = { DB: D1Database; DOCUMENTS: KVNamespace };
 type DocRow = {
   id: string; entity_type: Entity; entity_id: string; category: string;
@@ -42,10 +42,14 @@ function canRead(snapshot: Snapshot, type: Entity, id: string, profile: Profile,
   const role = profile.app_role || (user.role === 'admin' ? 'Admin' : user.role === 'guest' ? 'Supplier' : 'Employee');
   if (role === 'Admin' || role === 'Procurement Head') return true;
   if (role === 'Procurement Officer') return type !== 'PAY';
-  if (role === 'Employee') return type === 'PR' && (
-    record.requestedByUsername === profile.username ||
-    (!record.requestedByUsername && record.requestedBy === user.name)
-  );
+  if (role === 'Employee') {
+    let usernames:string[]=[];let names:string[]=[];
+    try{usernames=JSON.parse(profile.username_aliases)||[];}catch{}
+    try{names=JSON.parse(profile.name_aliases)||[];}catch{}
+    return type === 'PR' && (record.requestedByUsername
+      ? record.requestedByUsername === profile.username || usernames.includes(string(record.requestedByUsername))
+      : record.requestedBy === user.name || Boolean(record.requestedBy && names.includes(string(record.requestedBy))));
+  }
   if (role !== 'Supplier' || type === 'PR') return false;
   const supplier = supplierId(snapshot, profile, user);
   if (type === 'BID' || type === 'PO') return record.supplierId === supplier;
@@ -85,7 +89,7 @@ export async function handleDocumentRoutes(
   if (path !== '/documents' && !/^\/documents\/[0-9a-f-]{36}(\/file)?$/i.test(path)) return null;
   const deny = (message: string, status = 403) => response({ error: message }, status, cors);
 
-  const profile = await env.DB.prepare(`SELECT app_role,company_name,status,access_revoked,username FROM users WHERE id=?`)
+  const profile = await env.DB.prepare(`SELECT app_role,company_name,status,access_revoked,username,username_aliases,name_aliases FROM users WHERE id=?`)
     .bind(user.id).first<Profile>();
   if (!profile || profile.status !== 'approved' || profile.access_revoked) return deny('Account is not approved or is revoked.');
 

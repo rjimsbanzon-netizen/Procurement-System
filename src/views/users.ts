@@ -26,6 +26,7 @@ export function renderUsersView(assignments: StaffAssignment[] = [], positionsLo
                                     <td class="p-4 text-xs">
                                         <div>${u.email}</div>
                                         <div class="text-slate-400">${u.companyName || u.department}</div>
+                                        ${u.role !== 'Supplier' && u.role !== 'Admin' ? `<div class="mt-2 text-[11px] font-semibold text-[#a64f32]">Requested position: ${['Head','Officer','Employee'].includes(u.requestedPosition) ? u.requestedPosition : 'Employee'}</div>` : ''}
                                     </td>
                                     <td class="p-4">
                                         ${positionsLoading ? `<span class="text-xs text-slate-500">Position unavailable while cloud assignments load</span>` : (() => {

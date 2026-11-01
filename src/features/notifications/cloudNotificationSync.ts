@@ -17,12 +17,16 @@ export type NotificationDataSnapshot = Record<string, ProcurementRecord[]>;
 export type CloudMessageAlert = {
   id: string; entityType: string; entityId: string; senderName: string; createdAt: string;
 };
+export type CloudDirectMessageAlert = {
+  id: string; senderId: string; senderName: string; createdAt: string;
+};
 
 type AccountCache = {
   read: Set<string>;
   queued: Set<string>;
   snapshot: NotificationDataSnapshot | null;
   messageAlerts: CloudMessageAlert[];
+  directMessageAlerts: CloudDirectMessageAlert[];
   contractAlerts: ContractAlert[];
   delegationAlerts: Delegation[];
   status: CloudNotificationStatus;
@@ -45,7 +49,7 @@ function storeFor(user: User): AccountCache {
   const id = accountId(user);
   let store = stores.get(id);
   if (!store) {
-    store = { read: new Set(), queued: new Set(), snapshot: null, messageAlerts: [], contractAlerts: [], delegationAlerts: [],
+    store = { read: new Set(), queued: new Set(), snapshot: null, messageAlerts: [], directMessageAlerts: [], contractAlerts: [], delegationAlerts: [],
       status: CLOUD_API_BASE ? 'connecting' : 'local', lastError: null };
     stores.set(id, store);
   }
@@ -76,6 +80,21 @@ export function getCloudNotificationSnapshot(user: User | null = DB.currentUser)
 export function getCloudMessageAlerts(user: User | null = DB.currentUser): readonly CloudMessageAlert[] {
   return user ? storeFor(user).messageAlerts : [];
 }
+export function getCloudDirectMessageAlerts(user: User | null = DB.currentUser): readonly CloudDirectMessageAlert[] {
+  return user ? storeFor(user).directMessageAlerts : [];
+}
+
+/** Immediately remove messages already marked read in D1 from the local feed. */
+export function clearReadDirectMessageAlerts(ids: string[], user: User | null = DB.currentUser): void {
+  if (!user || !ids.length) return;
+  const store = storeFor(user);
+  const read = new Set(ids);
+  const remaining = store.directMessageAlerts.filter(alert => !read.has(alert.id));
+  if (remaining.length === store.directMessageAlerts.length) return;
+  store.directMessageAlerts = remaining;
+  notify();
+}
+
 export function getCloudContractAlerts(user: User | null = DB.currentUser): readonly ContractAlert[] {
   return user ? storeFor(user).contractAlerts : [];
 }
@@ -136,7 +155,7 @@ async function refreshCloudNotifications(): Promise<void> {
   const store = storeFor(user);
   try {
     const canMessage = ['Admin', 'Procurement Head', 'Procurement Officer', 'Supplier'].includes(user.role);
-    const [receiptsResult, workspaceResult, messagesResult, contractResult, delegationResult] = await Promise.all([
+    const [receiptsResult, workspaceResult, messagesResult, contractResult, delegationResult, , directMessagesResult] = await Promise.all([
       cloudRequest('/notifications/read'),
       cloudRequest('/enterprise-state'),
       canMessage ? cloudRequest('/sourcing/message-alerts').catch((error: unknown) => {
@@ -157,6 +176,11 @@ async function refreshCloudNotifications(): Promise<void> {
         console.warn('Bidding deadline reminders unavailable until sourcing deadlines can be loaded.',error);
         return null;
       }),
+      cloudRequest('/account/message-alerts').catch((error: unknown) => {
+        // Older Worker deployments may not yet expose this endpoint.
+        console.warn('Private message alerts unavailable; deploy the updated accountRoutes.ts.', error);
+        return null;
+      }),
     ]);
     const receipts = receiptsResult as { readIds?: unknown };
     const workspace = workspaceResult as { data?: unknown };
@@ -175,6 +199,18 @@ async function refreshCloudNotifications(): Promise<void> {
             typeof row.entityId === 'string' && typeof row.senderName === 'string' &&
             typeof row.createdAt === 'string';
         }).slice(0, 200);
+      }
+    }
+
+    if (directMessagesResult && typeof directMessagesResult === 'object') {
+      const alerts = (directMessagesResult as { alerts?: unknown }).alerts;
+      if (Array.isArray(alerts)) {
+        store.directMessageAlerts = alerts.filter((item): item is CloudDirectMessageAlert => {
+          if (!item || typeof item !== 'object') return false;
+          const row = item as Record<string, unknown>;
+          return typeof row.id === 'string' && typeof row.senderId === 'string' &&
+            typeof row.senderName === 'string' && typeof row.createdAt === 'string';
+        }).slice(0, 100);
       }
     }
 

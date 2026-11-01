@@ -44,6 +44,15 @@ export function renderAuthScreen() {
                                 <option value="Operations">Operations</option>
                             </select>
                         </div>
+                        <div id="position-field-container">
+                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Requested Position</label>
+                            <select id="auth-requested-position" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-sm">
+                                <option value="Employee">Employee</option>
+                                <option value="Officer">Officer</option>
+                                <option value="Head">Head</option>
+                            </select>
+                            <p class="mt-1 text-xs text-slate-500">This is a position request, not immediate access. Admin verifies your account and formally appoints Heads and Officers.</p>
+                        </div>
                         <div id="supplier-select-container" class="hidden">
                             <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Select Supplier Organization</label>
                             <select id="auth-supplier-id" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 text-sm">

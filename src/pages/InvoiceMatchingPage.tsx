@@ -61,10 +61,15 @@ export default function InvoiceMatchingPage() {
   const poSigned = Boolean(po && ['Approved & Signed', 'Issued'].includes(po.status));
   const amountMatches = Boolean(po && amount.trim() && Number.isFinite(Number(amount)) &&
     cents(Number(amount)) === cents(Number(po.totalCost)));
-  // A Finance approver must be explicitly assigned, including when the account is Admin.
-  // Admin has oversight by default, not automatic invoice-verification authority.
-  const canVerify = !isSupplier && Boolean(settings?.assignments.some(assignment =>
-    assignment.step_role === 'Finance Officer' && assignment.user_id === me?.id));
+  // The Worker calculates effective Finance Officer authority, including
+  // time-bound approved delegation (e.g. Jason covering Juan's leave).
+  // Keep the direct-assignment fallback only for an older Worker deployment.
+  // The POST /finance/invoices/:id/match route still enforces permission itself.
+  const canVerify = !isSupplier && Boolean(settings?.invoiceVerification
+    ? settings.invoiceVerification.allowed
+    : settings?.assignments.some(assignment =>
+      assignment.step_role === 'Finance Officer' && assignment.user_id === me?.id));
+  const actingFinance = canVerify && Boolean(settings?.invoiceVerification?.acting);
   const canSubmit = isSupplier;
   const reviewInvoice = invoices.find(invoice => invoice.id === selectedReview) ?? null;
 
@@ -205,8 +210,9 @@ export default function InvoiceMatchingPage() {
     </header>
 
     {!isSupplier && !loading && <div className="rounded-lg bg-sky-50 border border-sky-200 p-3 text-sm text-sky-900">
-      {canVerify ? <><strong>Assigned Finance Reviewer:</strong> Inspect the supplier's file and the three-way checks before confirming a match.</>
-        : <><strong>Staff / Admin oversight:</strong> You can review submitted invoices and discrepancies, but only the assigned Finance Officer can verify the match. Admin can assign that reviewer in Department Budgets.</>}
+      {canVerify ? <><strong>{actingFinance ? 'Acting Finance Officer:' : 'Assigned Finance Reviewer:'}</strong> Inspect the supplier's file and three-way checks before confirming a match.
+        {actingFinance && settings?.invoiceVerification?.validUntil && <> Your delegation is valid through <strong>{settings.invoiceVerification.validUntil}</strong> (Philippine time).</>}</>
+        : <><strong>Staff / Admin oversight:</strong> You can review submitted invoices and discrepancies, but only the assigned or currently delegated Finance Officer can verify the match. Admin can manage the Finance Officer appointment in Staff Assignments and temporary coverage in Approval Delegation.</>}
     </div>}
     {!CLOUD_API_BASE && <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">Invoices and matching require an active Cloudflare Worker connection.</div>}
     {error && <div role="alert" className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-sm text-rose-800">{error}</div>}

@@ -1,4 +1,5 @@
 import { DB } from '../../store/state';
+import { ownsRequisition } from '../../domain/ownerIdentity';
 import type { ProcurementRecord, ProcurementState, User } from '../../types/procurement';
 
 export type TrackingStageStatus = 'complete' | 'current' | 'upcoming' | 'blocked' | 'not-recorded';
@@ -22,8 +23,7 @@ export interface ProcurementJourney {
 }
 
 function owned(pr: ProcurementRecord, user: User): boolean {
-  if (user.username && pr.requestedByUsername) return pr.requestedByUsername === user.username;
-  return !pr.requestedByUsername && pr.requestedBy === user.name;
+  return ownsRequisition(pr, user);
 }
 
 /** Keep supplier access scoped to its own awarded purchase orders. */

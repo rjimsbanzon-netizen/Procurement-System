@@ -4,6 +4,7 @@
  */
 import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
 import { handleDocumentRoutes } from './documentRoutes';
+import { handleAccountRoutes } from './accountRoutes';
 import { handleNotificationRoutes } from './notificationRoutes';
 import { handleFinanceRoutes, validateFinanceSnapshotWrite } from './financeRoutes';
 import { handleSourcingRoutes, validateSourcingSnapshotWrite } from './sourcingRoutes';
@@ -18,6 +19,8 @@ export interface Env {
   DOCUMENTS: KVNamespace;
   ALLOWED_ORIGIN?: string;
   BOOTSTRAP_SECRET?: string;
+  RESEND_API_KEY?: string;
+  VERIFICATION_FROM_EMAIL?: string;
 }
 
 type Role = 'admin' | 'employee' | 'guest';
@@ -33,6 +36,8 @@ type User = {
   department: string;
   company_name: string;
   access_revoked: number;
+  username_aliases?: string;
+  name_aliases?: string;
 };
 
 const ACCESS_CONTROL_ROLES = [
@@ -175,7 +180,7 @@ async function authenticate(request: Request, env: Env): Promise<User | null> {
   if (!token) return null;
   const row = await env.DB.prepare(
     `SELECT users.id, users.username, users.name, users.email, users.role,
-            users.app_role, users.status, users.department, users.company_name, users.access_revoked
+            users.app_role, users.status, users.department, users.company_name, users.access_revoked, users.username_aliases, users.name_aliases
      FROM sessions JOIN users ON users.id = sessions.user_id
      WHERE sessions.token_hash = ? AND sessions.expires_at > ?
        AND users.status = 'approved' AND users.access_revoked = 0`
@@ -254,7 +259,7 @@ export default {
       if (pathname === '/auth/register' && request.method === 'POST') {
         const body = (await request.json()) as {
           username?: unknown; password?: unknown; name?: unknown; email?: unknown;
-          accountType?: unknown; department?: unknown; companyName?: unknown;
+          accountType?: unknown; department?: unknown; companyName?: unknown; requestedPosition?: unknown;
         };
         const accountError = accountValidationError(body);
         if (accountError) return json({ error: accountError }, 400, cors);
@@ -268,6 +273,16 @@ export default {
           return json({ error: 'Supplier company name must be text.' }, 400, cors);
         }
         const accountType = body.accountType;
+        const requestedPosition = accountType === 'supplier' ? 'Supplier' : body.requestedPosition ?? 'Employee';
+        if (!['Employee', 'Officer', 'Head', 'Supplier'].includes(String(requestedPosition)) ||
+            (accountType === 'employee' && requestedPosition === 'Supplier')) {
+          return json({error:'Choose Employee, Officer or Head as the requested position.'},400,cors);
+        }
+        const reservedUsername = await env.DB.prepare('SELECT user_id FROM account_username_history WHERE username=?')
+          .bind((body.username as string).trim().toLowerCase()).first();
+        if (reservedUsername) return json({error:'Username is reserved by a previous account owner.'},409,cors);
+        // Selecting a position NEVER grants it: Admin must verify the account
+        // and formally appoint the position in Staff Assignments.
         const appRole = accountType === 'supplier' ? 'Supplier' : 'Employee';
         const role: Role = accountType === 'supplier' ? 'guest' : 'employee';
         const department = accountType === 'employee' ? (body.department as string | undefined)?.trim() ?? '' : '';
@@ -282,12 +297,12 @@ export default {
         try {
           await env.DB.prepare(
             `INSERT INTO users
-             (id, username, password_hash, name, email, role, app_role, status, department, company_name, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
+             (id, username, password_hash, name, email, role, app_role, status, department, company_name, requested_position, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`
           ).bind(
             id, (body.username as string).trim().toLowerCase(), await hashPassword(body.password as string),
             (body.name as string).trim(), (body.email as string).trim().toLowerCase(),
-            role, appRole, department, companyName, now, now,
+            role, appRole, department, companyName, requestedPosition, now, now,
           ).run();
         } catch (error) {
           if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
@@ -302,9 +317,9 @@ export default {
             }
             const updated = await env.DB.prepare(
               `UPDATE users SET name = ?, app_role = ?, role = ?, status = 'pending',
-                 department = ?, company_name = ?, updated_at = ?
+                 department = ?, company_name = ?, requested_position = ?, updated_at = ?
                WHERE id = ? AND status = 'rejected' AND access_revoked = 0`
-            ).bind((body.name as string).trim(), appRole, role, department, companyName, now, existing.id).run();
+            ).bind((body.name as string).trim(), appRole, role, department, companyName, requestedPosition, now, existing.id).run();
             if (updated.meta.changes !== 1) return json({ error: 'Unable to resubmit account.' }, 409, cors);
             return json({ ok: true, status: 'pending', reapplied: true }, 200, cors);
           }
@@ -320,7 +335,7 @@ export default {
         }
         const row = await env.DB.prepare(
           `SELECT id, username, password_hash, name, email, role,
-                  app_role, status, department, company_name, access_revoked
+                  app_role, status, department, company_name, access_revoked, username_aliases, name_aliases
            FROM users WHERE username = ?`
         )
           .bind(body.username.trim().toLowerCase())
@@ -397,6 +412,46 @@ export default {
 
       const user = await authenticate(request, env);
       if (!user) return json({ error: 'Authentication required' }, 401, cors);
+
+      if (pathname === '/account/password' && request.method === 'POST') {
+        const body = (await request.json().catch(() => ({}))) as Record<string,unknown>;
+        const current = body.currentPassword;
+        const replacement = body.newPassword;
+        if (typeof current !== 'string' || typeof replacement !== 'string' ||
+          replacement.length < 10 || replacement.length > 256 ||
+          current === replacement) {
+          return json({error:'Enter your current password and a different new password of 10–256 characters.'},400,cors);
+        }
+        const now = Math.floor(Date.now()/1000);
+        const row = await env.DB.prepare('SELECT failed_count,window_started FROM account_password_attempts WHERE user_id=?')
+          .bind(user.id).first<{failed_count:number;window_started:number}>();
+        if (row && now-row.window_started < 900 && row.failed_count >= 5)
+          return json({error:'Too many incorrect attempts. Please try again in 15 minutes.'},429,cors);
+        const passwordRow = await env.DB.prepare('SELECT password_hash FROM users WHERE id=?')
+          .bind(user.id).first<{password_hash:string}>();
+        if (!passwordRow || !(await verifyPassword(current,passwordRow.password_hash))) {
+          await env.DB.prepare(`INSERT INTO account_password_attempts(user_id,failed_count,window_started)
+            VALUES(?,1,?) ON CONFLICT(user_id) DO UPDATE SET
+            failed_count=CASE WHEN ?-window_started >=900 THEN 1 ELSE failed_count+1 END,
+            window_started=CASE WHEN ?-window_started>=900 THEN excluded.window_started ELSE window_started END`)
+            .bind(user.id,now,now,now).run();
+          return json({error:'Current password is incorrect.'},403,cors);
+        }
+        const token = request.headers.get('Authorization')?.match(/^Bearer ([A-Za-z0-9_-]+)$/)?.[1];
+        if (!token) return json({error:'Authentication required.'},401,cors);
+        const tokenHash = await digest(token);
+        await env.DB.batch([
+          env.DB.prepare('UPDATE users SET password_hash=?,updated_at=? WHERE id=?')
+            .bind(await hashPassword(replacement),new Date().toISOString(),user.id),
+          env.DB.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?')
+            .bind(user.id,tokenHash),
+          env.DB.prepare('DELETE FROM account_password_attempts WHERE user_id=?').bind(user.id),
+        ]);
+        return json({ok:true,message:'Password changed. Other sessions have been signed out.'},200,cors);
+      }
+
+      const accountResponse = await handleAccountRoutes(request, env, user, cors);
+      if (accountResponse) return accountResponse;
 
       // Files are private: authenticate before handling document routes.
       const documentResponse = await handleDocumentRoutes(request, env, user, cors);
@@ -537,7 +592,7 @@ export default {
         if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const { results } = await env.DB.prepare(
           `SELECT id, username, name, email, role, app_role, status,
-                  department, company_name, access_revoked FROM users ORDER BY username`
+                  department, company_name, access_revoked, requested_position, username_aliases, name_aliases FROM users ORDER BY username`
         ).all();
         return json(results ?? [], 200, cors);
       }

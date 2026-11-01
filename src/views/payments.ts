@@ -1,33 +1,27 @@
 // @ts-nocheck
 import { emptyTableRow } from './shared/feedback';
 import { openProcessPaymentModal } from '../actions/orderActions';
-import { hasPermission, getCurrentPermissionRole } from '../domain/permissions';
-import { isFinanceDepartment } from '../domain/staffPositions';
 import { isOrderFullyVerified } from '../domain/procurement';
 import { DB } from '../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
-export function renderPaymentsView(settings: import('../services/finance').FinanceSettings | null = null) {
+export function renderPaymentsView(settings: import('../services/finance').FinanceSettings | null = null, authorities:Record<string,{allowed:boolean;requiredRole:'Finance Officer'|'Finance Head';threshold:number;reason:string}>={}) {
     let payList = DB.payments;
     if (DB.currentUser.role === 'Supplier') {
         const mySup = DB.suppliers.find(s => s.id === DB.currentUser.supplierId);
         if (mySup) payList = payList.filter(p => p.supplierName === mySup.name);
     }
 
-    const myRole=getCurrentPermissionRole();
     const headThreshold=settings?.financeHeadFrom ?? null;
-    const assignments=settings?.assignments ?? [];
     const currentUser=DB.currentUser;
     const requiredReviewer=(p)=>{
        const amount=Number(DB.orders.find(o=>o.id===p.poId)?.totalCost ?? p.totalAmount);
        return headThreshold!==null && amount>=headThreshold?'Finance Head':'Finance Officer';
     };
     const authorizedFor=(p)=>{
-       if(headThreshold===null||!isFinanceDepartment(currentUser?.department))return false;
-       const role=requiredReviewer(p);
-       const assigned=role==='Finance Head'?assignments.find(a=>a.step_role==='Department Head'&&isFinanceDepartment(a.department)):
-         assignments.find(a=>a.step_role==='Finance Officer'&&a.department==='*');
-       return myRole===role&&assigned?.user_id===currentUser?.id&&hasPermission('process_payment');
+       // Never infer payment authority from an account title. The Worker checks
+       // the formal appointment OR active delegation and the PO value threshold.
+       return authorities[p.poId]?.allowed === true;
     };
     return `
         <div class="space-y-4">
@@ -35,7 +29,7 @@ export function renderPaymentsView(settings: import('../services/finance').Finan
                 <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                     <div>
                         <h3 class="font-bold text-slate-800">Financial Disbursements & Payment Approvals</h3>
-                        <p class="text-xs text-slate-500">Payments require a signed PO, verified receipt, and matched invoice. Only the assigned Finance Officer may process amounts below the Finance Head threshold; the assigned Finance Head handles amounts at or above it.</p><button data-command="navigateTo" data-arg1="invoice_matching" class="mt-2 text-xs font-bold text-[#a64f32]">Open Invoice &amp; PO Matching</button>
+                        <p class="text-xs text-slate-500">Payments require a signed PO, verified receipt, and matched invoice. Only the appointed Finance Officer or an active authorized substitute may process amounts below the Finance Head threshold; the Finance Head or authorized substitute handles amounts at or above it.</p><button data-command="navigateTo" data-arg1="invoice_matching" class="mt-2 text-xs font-bold text-[#a64f32]">Open Invoice &amp; PO Matching</button>
                     </div>
                 </div>
 
@@ -76,7 +70,7 @@ export function renderPaymentsView(settings: import('../services/finance').Finan
                                                 <button data-command="openProcessPaymentModal" data-arg1="${p.id}" ${!isOrderFullyVerified(p.poId) ? 'disabled' : ''} class="px-3 py-1.5 ${!isOrderFullyVerified(p.poId) ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'} rounded-md text-xs font-semibold shadow-sm transition-colors">
                                                     <i class="fa-solid fa-money-check-dollar mr-1"></i> Process Payment
                                                 </button>
-                                        ` : `<div class="text-xs text-slate-500">${headThreshold===null && currentUser?.role!=='Supplier'?'Loading Finance settings…':`Assigned ${requiredReviewer(p)} required`}</div>`}
+                                        ` : `<div class="text-xs text-slate-500">${headThreshold===null && currentUser?.role!=='Supplier'?'Loading Finance settings…':authorities[p.poId]?.reason || `Assigned or acting ${requiredReviewer(p)} required`}</div>`}
                                     </td>
                                 </tr>
                             `).join('')}

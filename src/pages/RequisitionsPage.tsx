@@ -1,3 +1,4 @@
+import { ownsRequisition } from '../domain/ownerIdentity';
 import { useCurrentUser, useRequisitions } from '../hooks/useProcurementData';
 import { useState } from 'react';
 import { ui } from '../store/state';
@@ -25,7 +26,7 @@ export default function RequisitionsPage() {
   const statuses = [...new Set(all.map(r => String(r.status)))].sort();
   const openCreate = () => { ui.currentModal = 'create_pr'; renderApp(); };
   const canEditLocal = (r: typeof all[number]) => !CLOUD_API_BASE && r.status === 'Pending' &&
-    (r.requestedByUsername ? r.requestedByUsername === user?.username : r.requestedBy === user?.name);
+    ownsRequisition(r,user);
   const edit = (id: string) => { ui.selectedRecord = id; ui.currentModal = 'edit_pr'; renderApp(); };
   return <div className="space-y-4 pb-6">
     <div className="flex flex-col flex-wrap items-start justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center">

@@ -3,6 +3,8 @@ import { DB } from '../store/state';
 import { getCachedStaffAssignments, isFinanceDepartment } from './staffPositions';
 import { DEFAULT_MATRIX, fixedValue, type MatrixRole } from './accessMatrix';
 import { resolvePermissionRole } from './permissionResolution';
+import { actingResponsibility } from './effectiveDelegation';
+import { CLOUD_API_BASE } from '../services/cloud';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 /** Active permissions follow the appointed role, not just the stored Employee account type. */
@@ -11,6 +13,14 @@ export function getCurrentPermissionRole():MatrixRole | null {
     return resolvePermissionRole(user, user ? getCachedStaffAssignments(user.id) : [], isFinanceDepartment);
 }
 export function hasPermission(action) {
+    // A delegation grants only the approvals and payment functions that the
+    // Worker validates for the delegated responsibility. It must NOT cause a
+    // general role promotion (e.g. bidding, account admin, or supplier access).
+    if ((action === 'process_payment' || action === 'confirm_payment') &&
+        (actingResponsibility('Finance Officer') || actingResponsibility('Finance Head')))
+        return true; // PO threshold and authority are rechecked by /finance/payment-authority.
+    if (action === 'approve_pr' && actingResponsibility('Procurement Head'))
+        return true; // Assigned PR step is still verified by /finance/approvals/:id/decision.
     const role=getCurrentPermissionRole();
     if(!role)return false;
     const locked=fixedValue(role,action);
@@ -25,6 +35,9 @@ export function canAccessTab(tab) {
     switch (tab) {
         case 'dashboard': return !isSupplier || hasPermission('view_supplier_portal');
         case 'notifications': return true;
+        case 'my_profile':
+        case 'people_directory':
+        case 'people_messages': return true;
         case 'global_search': return !isSupplier;
         case 'supplier_analytics': return isSupplier || ['Admin','Procurement Head','Procurement Officer'].includes(getCurrentPermissionRole() || '');
         case 'approval_delegation': return !isSupplier;
@@ -57,9 +70,14 @@ export function canAccessTab(tab) {
                 ? hasPermission('view_assigned_po')
                 : canManageDeliveryIssues() || canApproveAmendments();
         case 'payments':
+            // Finance colleagues may view the payment page even before the
+            // short-lived acting-role cache has loaded. Only the Worker's
+            // /finance/payment-authority decision can enable disbursement.
             return isSupplier ? hasPermission('view_assigned_po')
                 : ['Admin','Procurement Head','Procurement Officer'].includes(DB.currentUser.role) ||
-                  hasPermission('process_payment') || hasPermission('confirm_payment');
+                  hasPermission('process_payment') || hasPermission('confirm_payment') ||
+                  Boolean(CLOUD_API_BASE && DB.currentUser.status === 'Active' &&
+                    isFinanceDepartment(DB.currentUser.department));
         case 'suppliers': return hasPermission('manage_suppliers') || hasPermission('rate_supplier');
         case 'audit': return DB.currentUser.role === 'Admin';
         case 'users': return DB.currentUser.role === 'Admin' && hasPermission('manage_users');

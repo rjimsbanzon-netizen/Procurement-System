@@ -3,6 +3,7 @@ import {DB} from '../store/state';
 import {delegationAPI,type DelegationList,type DelegationRole,type RequestKind,type Delegation} from '../services/delegations';
 import {confirmAction,requestInput} from '../services/actionDialogs';
 import {CLOUD_API_BASE} from '../services/cloud';
+import {navigateTo} from '../core/renderBridge';
 
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const finance=(s:string)=>['finance & accounting','finance and accounting','finance'].includes(s.toLowerCase().trim());
@@ -37,10 +38,42 @@ export default function ApprovalDelegationPage(){
  const primary=chosen?.user;
  const eligible=useMemo(()=>{
   if(!primary||!selectedRole)return [];
-  return (data?.staff??[]).filter(person=>person.id!==primary.id&&(selectedRole==='Procurement Head'
+  const staff=data?.staff??[];
+  // A newer Worker returns the candidates produced by the same eligibility
+  // logic used by the secure submission route (including Finance conflicts).
+  if(Array.isArray(chosen?.eligibleStaffIds)){
+   const allowed=new Set(chosen.eligibleStaffIds);
+   return staff.filter(person=>allowed.has(person.id));
+  }
+  // Retain compatibility while the updated Worker is being deployed.
+  return staff.filter(person=>person.id!==primary.id&&(selectedRole==='Procurement Head'
    ?person.app_role==='Procurement Officer'&&person.department.toLowerCase().trim()==='procurement'
    :selectedRole==='Department Head'?person.app_role==='Employee'&&person.department.trim().toLowerCase()===selectedDepartment.trim().toLowerCase():person.app_role==='Employee'&&finance(person.department)));
- },[data,selectedRole,selectedDepartment,primary]);
+ },[data,chosen,selectedRole,selectedDepartment,primary]);
+ // A different appointment or a refreshed roster may invalidate a prior choice.
+ useEffect(()=>{
+  if(delegate&&data&&!eligible.some(person=>person.id===delegate))setDelegate('');
+ },[delegate,data,eligible]);
+ const noStaffReason=useMemo(()=>{
+  if(!data||!primary||!selectedRole||eligible.length)return '';
+  const staff=data.staff||[];
+  const normal=(name:string)=>name.trim().toLowerCase().replace(/\s+/g,' ');
+  if(selectedRole==='Procurement Head'){
+   const officers=staff.filter(p=>p.app_role==='Procurement Officer'&&p.id!==primary.id);
+   if(!officers.length)return 'No active, approved account has the Procurement Officer role. Admin must approve an employee and set their role to Procurement Officer in User Verification.';
+   if(!officers.some(p=>normal(p.department)==='procurement'))return 'Procurement Officer accounts exist, but none belongs to the Procurement department. Admin can correct their home department in Staff Assignments.';
+   return 'Procurement Officers were found, but they are not currently eligible. Refresh the list and check their account status and assignment.';
+  }
+  if(selectedRole==='Department Head'){
+   const colleagues=staff.filter(p=>p.id!==primary.id&&normal(p.department)===normal(selectedDepartment));
+   if(!colleagues.length)return `No other active, approved staff accounts belong to ${selectedDepartment}. Admin can approve or transfer an employee to this department.`;
+   if(!colleagues.some(p=>p.app_role==='Employee'))return `The staff in ${selectedDepartment} do not have the regular Employee role. Only an approved Employee in this department can cover Department Head PR submission.`;
+   return 'The available employees do not satisfy the current delegation rules. Admin should review their assignments.';
+  }
+  const financeStaff=staff.filter(p=>p.id!==primary.id&&finance(p.department));
+  if(!financeStaff.some(p=>p.app_role==='Employee'))return 'No active, approved regular Employee is available in Finance & Accounting. Admin can approve or transfer an employee.';
+  return 'Finance employees were found, but their existing Finance approval assignments or separation-of-duties restrictions make them ineligible.';
+ },[data,primary,selectedRole,selectedDepartment,eligible]);
  async function submit(e:FormEvent){
   e.preventDefault();if(!selectedRole||!delegate||!start||!end||!primary)return;
   setBusy(true);setError('');setSuccess('');
@@ -68,7 +101,7 @@ export default function ApprovalDelegationPage(){
   const pending=d.review_status==='Pending';
   if(!await confirmAction({title:pending?'Cancel delegation request':'Revoke approved delegation',message:pending?`Cancel ${d.primary_name}'s pending request?`:`Immediately revoke ${d.delegate_name}'s substitute approval authority for ${d.step_role}?`,tone:'warning',confirmText:pending?'Cancel request':'Revoke delegation'}))return;
   setBusy(true);setError('');setSuccess('');
-  try{await delegationAPI.revoke(d.id);await load();setSuccess(pending?'Delegation request cancelled.':'Delegation revoked successfully.');}
+  try{await delegationAPI.revoke(d.id);await load();setSuccess(pending?'Delegation request cancelled.':'Delegation revoked. The substitute loses acting-role authority immediately on the server and returns to their original account access.');}
   catch(e){setError(e instanceof Error?e.message:String(e))}finally{setBusy(false)}
  }
  const pending=data?.delegations.filter(d=>d.review_status==='Pending'&&!d.revoked_at)||[];
@@ -89,7 +122,15 @@ export default function ApprovalDelegationPage(){
     <label className="text-sm font-semibold">Approval responsibility<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={chosen?keyFor(chosen.role,chosen.department):''} onChange={e=>{setChosenAssignment(e.target.value);setDelegate('')}} required>{!chosen&&<option value="">Select responsibility</option>}{availableAssignments.map(p=><option key={keyFor(p.role,p.department)} value={keyFor(p.role,p.department)}>{p.role==='Department Head'?`${p.department} · Department Head`:p.role}</option>)}</select></label>
     <label className="text-sm font-semibold">Assigned primary approver<input className="block mt-1 w-full p-2.5 rounded-lg border bg-slate-50 font-normal" readOnly value={primary?`${primary.name} · ${primary.department}`:'No eligible primary approver assigned'} /></label>
     <label className="text-sm font-semibold">Request type<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={kind} onChange={e=>setKind(e.target.value as RequestKind)}><option value="Leave">Leave / absence coverage</option><option value="Delegation">Temporary delegation</option></select></label>
-    <label className="text-sm font-semibold">Authorized substitute<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={delegate} required onChange={e=>setDelegate(e.target.value)}><option value="">Choose eligible staff</option>{eligible.map(p=><option key={p.id} value={p.id}>{p.name} · {p.department}</option>)}</select><span className="text-xs text-slate-500 font-normal">{selectedRole?description(selectedRole):''}{selectedRole&&!eligible.length?' No eligible active staff member was found; ask Admin to assign or verify a qualified employee.':''}</span></label>
+    <label className="text-sm font-semibold">Authorized substitute<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={delegate} required onChange={e=>setDelegate(e.target.value)}><option value="">{!data?'Loading eligible staff…':eligible.length?'Choose eligible staff':'No eligible staff available'}</option>{eligible.map(p=><option key={p.id} value={p.id}>{p.name} · {p.department}</option>)}</select><span className="mt-1 block text-xs text-slate-500 font-normal">{selectedRole?description(selectedRole):''}</span></label>
+    {noStaffReason&&<div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 lg:col-span-2">
+      <p className="font-semibold">Why no eligible staff are listed</p>
+      <p className="mt-1 leading-6">{noStaffReason}</p>
+      {admin&&<div className="mt-3 flex flex-wrap gap-2">
+       <button type="button" onClick={()=>navigateTo('users')} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100">Review accounts &amp; roles</button>
+       <button type="button" onClick={()=>navigateTo('staff_assignments')} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100">Manage staff departments</button>
+      </div>}
+    </div>}
     <div className="grid grid-cols-2 gap-3 lg:col-span-2"><label className="text-sm font-semibold">Start date<input type="date" className="block mt-1 w-full border rounded-lg p-2.5 font-normal" value={start} min={today()} onChange={e=>setStart(e.target.value)} required /></label><label className="text-sm font-semibold">End date<input type="date" className="block mt-1 w-full border rounded-lg p-2.5 font-normal" value={end} min={start} onChange={e=>setEnd(e.target.value)} required /></label></div>
    </div>
    <label className="text-sm font-semibold block">Reason for leave / delegation<textarea className="block mt-1 border rounded-lg p-2.5 w-full font-normal" value={reason} required minLength={5} maxLength={500} rows={2} onChange={e=>setReason(e.target.value)} placeholder="e.g. Medical leave, Nov 10–15; temporary coverage needed for pending PR approvals" /></label>

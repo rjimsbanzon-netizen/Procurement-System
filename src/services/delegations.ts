@@ -11,15 +11,28 @@ export type Delegation={
 };
 export type EligibleStaff={id:string;name:string;role:string;app_role:string;department:string;status:string;access_revoked:number};
 export type DelegationList={delegations:Delegation[];activeRoles:DelegationRole[];activeDepartments:string[];staff:EligibleStaff[];
- principals:{role:DelegationRole;department:string;user:EligibleStaff|null}[];canRequest:boolean};
+ principals:{role:DelegationRole;department:string;user:EligibleStaff|null;eligibleStaffIds?:string[]}[];canRequest:boolean};
 function connected(){if(!CLOUD_API_BASE)throw new Error('Approval delegation requires Cloudflare D1.');}
 export const delegationAPI={
  async list():Promise<DelegationList>{connected();return cloudRequest('/delegations') as Promise<DelegationList>},
  async create(data:{stepRole:DelegationRole;department:string;delegateUserId:string;startsOn:string;endsOn:string;reason:string;requestKind:RequestKind}){
-  connected();return cloudRequest('/delegations',{method:'POST',body:JSON.stringify(data)}) as Promise<{ok:boolean;id:string;status:ReviewStatus}>;
+  connected();
+  const result=await cloudRequest('/delegations',{method:'POST',body:JSON.stringify(data)}) as {ok:boolean;id:string;status:ReviewStatus};
+  window.dispatchEvent(new Event('procureflow:delegation-updated'));
+  return result;
  },
- async decide(id:string,decision:'approve'|'reject',note:string){connected();return cloudRequest(`/delegations/${encodeURIComponent(id)}/decision`,{
-  method:'POST',body:JSON.stringify({decision,note})
- });},
- async revoke(id:string){connected();return cloudRequest(`/delegations/${encodeURIComponent(id)}/revoke`,{method:'POST',body:'{}'});}
+ async decide(id:string,decision:'approve'|'reject',note:string){
+  connected();
+  const result=await cloudRequest(`/delegations/${encodeURIComponent(id)}/decision`,{method:'POST',body:JSON.stringify({decision,note})});
+  window.dispatchEvent(new Event('procureflow:delegation-updated'));
+  return result;
+ },
+ async revoke(id:string){
+  connected();
+  // Changes take effect in D1 before the local UI is refreshed. The Worker
+  // checks revoked_at IS NULL on every protected action.
+  const result=await cloudRequest(`/delegations/${encodeURIComponent(id)}/revoke`,{method:'POST',body:'{}'});
+  window.dispatchEvent(new Event('procureflow:delegation-updated'));
+  return result;
+ }
 };

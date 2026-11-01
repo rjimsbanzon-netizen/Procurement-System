@@ -4,7 +4,7 @@ import { MATRIX_GROUPS, MATRIX_ROLES, normalizeMatrix, fixedValue } from '../dom
 import { renderDashboardView } from './dashboard';
 
 /**
- * Show only Admin-editable capabilities. Account/assignment/workflow
+ * Show only administrator-editable capabilities. Account/assignment/workflow
  * protections stay enforced in normalizeMatrix, permissions.ts, and the API.
  * Ineligible role/action pairs have no interactive control.
  */
@@ -24,7 +24,7 @@ export function renderAccessControlView() {
       <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 class="text-xl font-bold text-slate-900">Editable Access Control Matrix</h2>
+            <h2 class="text-xl font-bold text-slate-900">Role-based Access Control Matrix</h2>
             <p class="mt-1 max-w-3xl text-sm text-slate-500">
               ${editableRows} configurable permissions across eight account roles and assigned positions.
               Only the settings you can actually change are shown. Protected approvals,
@@ -81,7 +81,7 @@ export function renderAccessControlView() {
         <strong>Protected workflow rules:</strong> The Department Head submits requests; assigned
         Procurement and Finance reviewers approve their designated steps. Only the appointed
         Finance Officer (below the Finance Head threshold) or Finance Head (at or above it)
-        processes verified payments. These rules cannot be changed from this matrix.
+        processes verified payments. Active, Admin-approved substitutes may perform their specifically delegated steps during their valid date range. The Worker rechecks every action. These rules cannot be changed from this matrix.
         Change financial thresholds under <strong>Department Budgets</strong>.
       </div>
     </section>`;

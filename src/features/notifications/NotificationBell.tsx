@@ -19,6 +19,9 @@ export function NotificationBell() {
       if (notification.targetTab === 'tracking' && notification.targetRecordId) {
         ui.trackingRecordId = notification.targetRecordId;
       }
+      if (notification.targetTab === 'people_messages' && notification.targetRecordId) {
+        ui.directMessagePeerId = notification.targetRecordId;
+      }
       if (notification.targetTab === 'supplier_messages' && notification.messageContext) {
         ui.messageSelection = notification.messageContext;
       }

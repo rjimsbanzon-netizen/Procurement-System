@@ -86,9 +86,16 @@ export function openAddSupplierModal() {
 
 export async function openProcessPaymentModal(payId) {
     const payment = DB.payments.find(item => item.id === payId);
-    if (!hasPermission('process_payment') || !payment || payment.status !== 'Pending' ||
-        !isOrderFullyVerified(payment.poId)) {
+    if (!payment || payment.status !== 'Pending' || !isOrderFullyVerified(payment.poId)) {
         showToast('Payment is available only after the complete Purchase Order passes inspection.', 'error');
+        return;
+    }
+    // The Worker's per-PO authority check includes approved acting Finance Officers
+    // and Finance Heads. The local matrix only represents permanent appointments,
+    // so it must not block an authorized substitute before the server is consulted.
+    // Keep the original local permission guard when running without the cloud API.
+    if (!CLOUD_API_BASE && !hasPermission('process_payment')) {
+        showToast('Only a Finance approver may process this payment.', 'error');
         return;
     }
     if (CLOUD_API_BASE) {

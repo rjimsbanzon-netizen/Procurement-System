@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DB, ui } from '../store/state';
 import { canAccessTab } from '../domain/permissions';
 import { navigateTo } from '../core/renderBridge';
+import { CLOUD_API_BASE } from '../services/cloud';
+import { accountAPI } from '../services/account';
 import { getNotifications, getUnreadCount } from '../features/notifications/notificationService';
 import procureflowMark from '../procureflow-mark.png';
 
@@ -87,6 +89,13 @@ const employeeSections: NavSection[] = [
     ]
   },
   {
+    title: 'Account & Community',
+    items: [
+      ['my_profile', 'My Account', 'fa-circle-user'],
+      ['people_messages', 'People & Messages', 'fa-comment-dots']
+    ]
+  },
+  {
     title: 'Administration',
     items: [
       ['audit', 'Audit Logs', 'fa-clock-rotate-left'],
@@ -116,6 +125,13 @@ const supplierSections: NavSection[] = [
       ['contracts', 'My Contracts', 'fa-file-contract'],
       ['supplier_analytics', 'My Performance', 'fa-chart-line'],
       ['documents', 'My Documents', 'fa-folder-open']
+    ]
+  },
+  {
+    title: 'Account & Community',
+    items: [
+      ['my_profile', 'My Account', 'fa-circle-user'],
+      ['people_messages', 'People & Messages', 'fa-comment-dots']
     ]
   },
   {
@@ -171,6 +187,15 @@ export function Sidebar({ isMobileOpen, onClose }: { isMobileOpen: boolean; onCl
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const scrollKey = String(user?.id ?? user?.username ?? 'anonymous');
   const [collapsed, setCollapsed] = useState<string[]>(() => getCollapsedGroups(scrollKey));
+  const [moduleQuery,setModuleQuery] = useState('');
+  const [dmUnread,setDmUnread] = useState(0);
+  useEffect(() => {
+    if (!CLOUD_API_BASE || !user?.id) { setDmUnread(0); return; }
+    let active=true;
+    const refresh=()=>{void accountAPI.conversations().then(items=>{if(active)setDmUnread(items.reduce((sum,item)=>sum+item.unread,0));}).catch(()=>{if(active)setDmUnread(0);});};
+    refresh();const timer=window.setInterval(refresh,20000);
+    return ()=>{active=false;window.clearInterval(timer);};
+  },[user?.id]);
   useEffect(() => { setCollapsed(getCollapsedGroups(scrollKey)); }, [scrollKey]);
   const toggleSection = (title: string) => {
     setCollapsed(current => {
@@ -194,7 +219,7 @@ export function Sidebar({ isMobileOpen, onClose }: { isMobileOpen: boolean; onCl
       if (event.key !== 'Tab') return;
       const drawer = document.getElementById('procureflow-sidebar');
       if (!drawer) return;
-      const controls = Array.from(drawer.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]'));
+      const controls = Array.from(drawer.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), a[href]'));
       if (!controls.length) return;
       const first = controls[0];
       const last = controls[controls.length - 1];
@@ -212,7 +237,7 @@ export function Sidebar({ isMobileOpen, onClose }: { isMobileOpen: boolean; onCl
   const sections = (user?.role === 'Supplier' ? supplierSections : employeeSections)
     .map(section => ({
       ...section,
-      items: section.items.filter(([id]) => canAccessTab(id))
+      items: section.items.filter(([id,label]) => canAccessTab(id) && (!moduleQuery.trim() || label.toLowerCase().includes(moduleQuery.trim().toLowerCase()) || section.title.toLowerCase().includes(moduleQuery.trim().toLowerCase())))
     }))
     .filter(section => section.items.length > 0);
 
@@ -230,20 +255,29 @@ export function Sidebar({ isMobileOpen, onClose }: { isMobileOpen: boolean; onCl
           <button ref={closeButtonRef} type="button" onClick={onClose} className="pf-drawer-close" aria-label="Close navigation menu"><i className="fa-solid fa-xmark" aria-hidden="true" /></button>
         </div>
 
+        <div className="px-3 pt-4">
+          <label htmlFor="pf-sidebar-module-search" className="sr-only">Search sidebar modules</label>
+          <div className="relative">
+            <i className="fa-solid fa-magnifying-glass pointer-events-none absolute left-3 top-3.5 text-xs text-slate-400" aria-hidden="true" />
+            <input id="pf-sidebar-module-search" type="search" value={moduleQuery} onChange={event=>setModuleQuery(event.target.value)} placeholder="Find a module…"
+              className="w-full rounded-xl border border-slate-600 bg-[#1b2721] py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 outline-none focus:border-[#c67b5e]" />
+          </div>
+        </div>
         <nav
           ref={navRef}
           onScroll={(event) => savedSidebarScroll.set(scrollKey, event.currentTarget.scrollTop)}
           className="min-h-0 flex-1 overflow-y-auto custom-scrollbar px-3 py-4"
         >
+          {sections.length === 0 && <p role="status" className="px-3 py-6 text-sm text-slate-400">No matching modules. Try another term.</p>}
           {sections.map(section => (
             <div key={section.title} className="sidebar-section mb-5">
-              <button type="button" className="sidebar-section-label pf-sidebar-group-toggle" aria-expanded={!collapsed.includes(section.title)} aria-controls={`pf-nav-group-${section.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} onClick={() => toggleSection(section.title)}>
+              <button type="button" className="sidebar-section-label pf-sidebar-group-toggle" aria-expanded={Boolean(moduleQuery.trim()) || !collapsed.includes(section.title)} aria-controls={`pf-nav-group-${section.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} onClick={() => toggleSection(section.title)}>
                 <span>{section.title}</span>
                 <i className={`fa-solid fa-chevron-down pf-sidebar-group-chevron ${collapsed.includes(section.title) ? 'pf-sidebar-group-collapsed' : ''}`} aria-hidden="true" />
               </button>
-              <div id={`pf-nav-group-${section.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} className="mt-2 flex flex-col gap-1.5" hidden={collapsed.includes(section.title)}>
+              <div id={`pf-nav-group-${section.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} className="mt-2 flex flex-col gap-1.5" hidden={!moduleQuery.trim() && collapsed.includes(section.title)}>
                 {section.items.map(([id, label, icon]) => (
-                  <NavButton key={id} id={id} label={label} icon={icon} badge={id === 'notifications' ? unread : null} onNavigate={onClose} />
+                  <NavButton key={id} id={id} label={label} icon={icon} badge={id === 'notifications' ? unread : id === 'people_messages' ? dmUnread : null} onNavigate={onClose} />
                 ))}
               </div>
             </div>
