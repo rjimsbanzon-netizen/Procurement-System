@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyTableRow } from './shared/feedback';
 import { approveAmendment, rejectAmendment } from '../actions/amendmentActions';
 import { hasPermission } from '../domain/permissions';
 import { DB } from '../store/state';
@@ -36,7 +37,7 @@ export function renderAmendmentsView() {
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             ${amendments.length === 0 ? `
-                                <tr><td colspan="7" class="p-8 text-center text-slate-400">No order amendments recorded.</td></tr>
+                                ${emptyTableRow(7, 'No order amendments', 'Amendments are displayed when delivery discrepancies or order changes require resolution.', 'fa-clipboard-list')}
                             ` : amendments.map(a => `
                                 <tr class="hover:bg-slate-50">
                                     <td class="p-4 font-bold text-purple-600">${a.id}</td>

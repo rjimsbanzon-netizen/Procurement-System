@@ -35,7 +35,7 @@ import { useEffect, useState } from 'react';
 import { DB, ui, setDB } from './store/state';
 import { CLOUD_API_BASE, restoreCloudSession } from './services/cloud';
 import { Storage } from './services/storage';
-import { registerRenderListener, renderApp } from './core/renderBridge';
+import { registerRenderListener, renderApp, navigateTo } from './core/renderBridge';
 import { attachAuthEvents } from './events/authEvents';
 import { attachMainEvents } from './events/mainEvents';
 import { canAccessTab } from './domain/permissions';
@@ -44,6 +44,7 @@ import { Header } from './components/Header';
 import { ModalHost } from './components/ModalHost';
 import { AuthScreen } from './components/AuthScreen';
 import { ActionDialogHost } from './components/ActionDialogHost';
+import { PageErrorBoundary } from './components/PageErrorBoundary';
 
 function CurrentPage() {
   if (!canAccessTab(ui.currentTab)) {
@@ -119,8 +120,21 @@ export default function App() {
     };
   }, [mobileMenuOpen]);
 
-  // Re-bind legacy form handlers only when the procurement screen changes.
-  // Opening the navigation drawer must not attach duplicate event listeners.
+  // Accessible across the app; never steals Ctrl/Cmd+K from signed-out users.
+  useEffect(() => {
+    const searchShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 'k') return;
+      if (!DB.currentUser || !canAccessTab('global_search')) return;
+      event.preventDefault();
+      if (ui.currentTab !== 'global_search') navigateTo('global_search');
+      window.setTimeout(() => document.getElementById('pf-global-search-input')?.focus(), 0);
+    };
+    document.addEventListener('keydown', searchShortcut);
+    return () => document.removeEventListener('keydown', searchShortcut);
+  }, []);
+
+  // Re-bind legacy page/modals after their revision-scoped markup is updated.
+  // The persistent Logout/Reset controls are guarded against duplicate binding.
   useEffect(() => {
     if (DB.currentUser) attachMainEvents();
     else attachAuthEvents();
@@ -128,14 +142,14 @@ export default function App() {
 
   return <>
     {DB.currentUser ?
-      <div key={revision} className="enterprise-shell flex h-screen min-h-0 bg-slate-100 overflow-hidden">
+      <div className="enterprise-shell flex h-screen min-h-0 bg-slate-100 overflow-hidden">
         {mobileMenuOpen && <button type="button" className="pf-nav-backdrop" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)} />}
         <Sidebar isMobileOpen={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           <Header onOpenMenu={() => setMobileMenuOpen(true)} isMenuOpen={mobileMenuOpen} />
-          <main id="procureflow-content" className="enterprise-main flex-1 min-w-0 min-h-0 overflow-y-auto p-4 md:p-6 bg-slate-50 custom-scrollbar"><CurrentPage /></main>
+          <main id="procureflow-content" className="enterprise-main flex-1 min-w-0 min-h-0 overflow-y-auto p-4 md:p-6 bg-slate-50 custom-scrollbar"><PageErrorBoundary key={ui.currentTab}><CurrentPage key={revision} /></PageErrorBoundary></main>
         </div>
-        <ModalHost />
+        <PageErrorBoundary title="The current dialog could not be displayed"><ModalHost key={revision} /></PageErrorBoundary>
         <MobileQuickActions isMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />
       </div>  : <div key={revision}><AuthScreen /></div>}
     <ActionDialogHost />

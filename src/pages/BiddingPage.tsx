@@ -3,6 +3,7 @@ import { HtmlView } from '../components/HtmlView';
 import { renderStockNeedsView } from '../views/bidding';
 import { CLOUD_API_BASE } from '../services/cloud';
 import { loadDeadlines } from '../services/sourcing';
+import { LoadingState } from '../components/FeedbackState';
 
 /** Supplier opportunities must still load enforced deadlines after the sections are split. */
 export default function BiddingPage() {
@@ -29,7 +30,7 @@ export default function BiddingPage() {
   }, []);
 
   return <div className="space-y-4">
-    {loading ? <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">Loading verified bidding deadlines…</div> :
+    {loading ? <LoadingState title="Loading published stock needs" description="Checking bidding deadlines before showing opportunities…" /> :
       <>{error && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{error}</p>}
         <HtmlView html={renderStockNeedsView()} /></>}
   </div>;

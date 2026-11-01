@@ -2,24 +2,13 @@
 import { DB } from '../store/state';
 import { getCachedStaffAssignments, isFinanceDepartment } from './staffPositions';
 import { DEFAULT_MATRIX, fixedValue, type MatrixRole } from './accessMatrix';
+import { resolvePermissionRole } from './permissionResolution';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 /** Active permissions follow the appointed role, not just the stored Employee account type. */
 export function getCurrentPermissionRole():MatrixRole | null {
-    const user=DB.currentUser;
-    if(!user)return null;
-    if(['Admin','Supplier','Procurement Head','Procurement Officer'].includes(user.role)) return user.role as MatrixRole;
-    const assignments=getCachedStaffAssignments(user.id);
-    const financeHead=assignments.some(a=>a.user_id===user.id&&a.step_role==='Department Head'&&
-       isFinanceDepartment(a.department)&&isFinanceDepartment(user.department));
-    const financeOfficer=assignments.some(a=>a.user_id===user.id&&a.step_role==='Finance Officer'&&a.department==='*'&&
-       isFinanceDepartment(user.department));
-    if(financeHead&&financeOfficer)return 'Employee'; // Conflicting roles never grant payment rights.
-    if(financeHead)return 'Finance Head';
-    if(financeOfficer)return 'Finance Officer';
-    if(assignments.some(a=>a.user_id===user.id&&a.step_role==='Department Head'&&
-       String(a.department).toLowerCase()===String(user.department).toLowerCase()))return 'Department Head';
-    return 'Employee';
+    const user = DB.currentUser;
+    return resolvePermissionRole(user, user ? getCachedStaffAssignments(user.id) : [], isFinanceDepartment);
 }
 export function hasPermission(action) {
     const role=getCurrentPermissionRole();

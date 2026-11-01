@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyTableRow } from '../shared/feedback';
 import { canManageBidding, getAgreementFinalizationError } from '../../domain/permissions';
 import { DB } from '../../store/state';
 import { detectSupplierClauseFindings, getSupplierQuotationTerms } from '../../domain/bidTerms';
@@ -33,7 +34,7 @@ export function renderBidComparisonView() {
                             </thead>
                             <tbody class="divide-y divide-slate-200">
                                 ${DB.bids.length === 0 ? `
-                                    <tr><td colspan="7" class="p-8 text-center text-slate-400">No bids submitted yet.</td></tr>
+                                    ${emptyTableRow(7, 'No vendor bids received', 'Suppliers can submit quotations for open published stock needs. Submitted offers will appear here.', 'fa-scale-balanced')}
                                 ` : DB.bids.map(b => {
                                     const need = DB.stockNeeds.find(s => s.id === b.needId) || { title: b.needId };
                                     const meeting = DB.proposalMeetings.find(m => m.bidId === b.id);
@@ -66,12 +67,12 @@ export function renderBidComparisonView() {
                                                     ` : meeting?.status === 'Pending Response' ? `
                                                         <span class="text-xs text-amber-700">Meeting response pending</span>
                                                     ` : canCreateNeed && !DB.orders.some(order => order.bidId === b.id) ? `
-                                                        <button data-command="${meeting?.status === 'Declined' ? 'openRescheduleMeetingModal' : 'openScheduleMeetingModal'}" data-arg1="${meeting?.status === 'Declined' ? escapeMeetingText(meeting.id) : escapeMeetingText(b.id)}" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-xs font-semibold transition-colors">
+                                                        <button data-command="${meeting?.status === 'Declined' ? 'openRescheduleMeetingModal' : 'openScheduleMeetingModal'}" data-arg1="${meeting?.status === 'Declined' ? escapeMeetingText(meeting.id) : escapeMeetingText(b.id)}" class="pf-primary-action px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-xs font-semibold transition-colors">
                                                             <i class="fa-solid fa-calendar-plus mr-1"></i>${meeting?.status === 'Declined' ? 'Reschedule Meeting' : 'Schedule Meeting'}
                                                         </button>
                                                     ` : ''}
                                                 ` : b.status === 'Submitted' && need.status === 'Published' && canCreateNeed ? `
-                                                    <button data-command="selectBid" data-arg1="${b.id}" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-md text-xs font-semibold">
+                                                    <button data-command="selectBid" data-arg1="${b.id}" class="pf-primary-action px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-md text-xs font-semibold">
                                                         <i class="fa-solid fa-check mr-1"></i>Select Supplier
                                                     </button>
                                                 ` : `

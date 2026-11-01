@@ -9,7 +9,7 @@ import { showToast } from '../services/toast';
 import { DB, ui } from '../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
-export function openCreateStockNeedModal(prId = null) {
+export function openCreateStockNeedModal(prId: string | null = null) {
     if (!canManageBidding()) {
         showToast('Only the Procurement Head or Admin can publish procurement needs.', 'error');
         return;

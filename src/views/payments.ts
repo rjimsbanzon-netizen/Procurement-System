@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyTableRow } from './shared/feedback';
 import { openProcessPaymentModal } from '../actions/orderActions';
 import { hasPermission, getCurrentPermissionRole } from '../domain/permissions';
 import { isFinanceDepartment } from '../domain/staffPositions';
@@ -34,7 +35,7 @@ export function renderPaymentsView(settings: import('../services/finance').Finan
                 <div class="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                     <div>
                         <h3 class="font-bold text-slate-800">Financial Disbursements & Payment Approvals</h3>
-                        <p class="text-xs text-slate-500">Payments require a signed PO, verified receipt, and matched invoice. Only the assigned Finance Officer may process amounts below the Finance Head threshold; the assigned Finance Head handles amounts at or above it.</p><button data-command="navigateTo" data-arg1="invoice_matching" class="mt-2 text-xs font-bold text-[#aa5638]">Open Invoice &amp; PO Matching</button>
+                        <p class="text-xs text-slate-500">Payments require a signed PO, verified receipt, and matched invoice. Only the assigned Finance Officer may process amounts below the Finance Head threshold; the assigned Finance Head handles amounts at or above it.</p><button data-command="navigateTo" data-arg1="invoice_matching" class="mt-2 text-xs font-bold text-[#a64f32]">Open Invoice &amp; PO Matching</button>
                     </div>
                 </div>
 
@@ -53,7 +54,7 @@ export function renderPaymentsView(settings: import('../services/finance').Finan
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             ${payList.length === 0 ? `
-                                <tr><td colspan="7" class="p-8 text-center text-slate-400">No payment transactions.</td></tr>
+                                ${emptyTableRow(7, 'No payment transactions yet', 'Payments become available after the purchase order is signed, delivery is verified, and invoice is matched.', 'fa-credit-card')}
                             ` : payList.map(p => `
                                 <tr class="hover:bg-slate-50">
                                     <td class="p-4 font-bold text-sky-600">${p.poId}</td>

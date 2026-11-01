@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyTableRow } from '../shared/feedback';
 import { canCancelProposalMeeting, canRequestMeetingReschedule, canReviewMeetingReschedule, canRescheduleProposalMeeting } from '../../actions/biddingActions';
 import { DB } from '../../store/state';
 import { escapeMeetingText, findMeetingConflicts, meetingDuration } from '../../domain/meetingSchedule';
@@ -36,7 +37,7 @@ export function renderProposalMeetingsView() {
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             ${visibleMeetings.length === 0 ? `
-                                <tr><td colspan="6" class="p-8 text-center text-slate-400">No proposal meetings scheduled yet.</td></tr>
+                                ${emptyTableRow(6, 'No proposal meetings scheduled', 'After a bid is reviewed, meeting invitations and supplier responses will appear here.', 'fa-calendar-days')}
                             ` : visibleMeetings.map(m => {
                                 const conflicts = !isSupplier ? findMeetingConflicts(m, DB.proposalMeetings, m.id) : [];
                                 const hasConflict = conflicts.length > 0;

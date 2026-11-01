@@ -4,6 +4,7 @@ import type { ProcurementRecord, User } from '../../types/procurement';
 import type { ContractAlert } from '../../services/contracts';
 import type { Delegation } from '../../services/delegations';
 import { canAccessTab } from '../../domain/permissions';
+import {loadDeadlines} from '../../services/sourcing';
 
 /**
  * Read/unread receipts live in D1, keyed by the authenticated user's ID.
@@ -150,6 +151,10 @@ async function refreshCloudNotifications(): Promise<void> {
       }),
       (!['Supplier'].includes(user.role) ? cloudRequest('/delegations') : Promise.resolve(null)).catch((error: unknown) => {
         console.warn('Delegation notifications unavailable; apply migration 0014 and redeploy the Worker.', error);
+        return null;
+      }),
+      (user.role==='Supplier' ? loadDeadlines() : Promise.resolve(null)).catch((error: unknown) => {
+        console.warn('Bidding deadline reminders unavailable until sourcing deadlines can be loaded.',error);
         return null;
       }),
     ]);

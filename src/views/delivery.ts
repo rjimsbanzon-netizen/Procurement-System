@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyTableRow } from './shared/feedback';
 import { openInitiateAmendmentModal, openInspectDeliveryModal } from '../actions/orderActions';
 import { canManageDeliveryIssues, hasPermission } from '../domain/permissions';
 import { DB } from '../store/state';
@@ -38,7 +39,7 @@ export function renderDeliveryView() {
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             ${deliveries.length === 0 ? `
-                                <tr><td colspan="7" class="p-8 text-center text-slate-400">No delivery logs recorded yet.</td></tr>
+                                ${emptyTableRow(7, 'No deliveries recorded', 'Verified shipments and delivery inspections will appear here.', 'fa-truck-ramp-box')}
                             ` : deliveries.map(d => `
                                 <tr class="hover:bg-slate-50">
                                     <td class="p-4 font-bold text-sky-600">${d.poId}</td>

@@ -19,7 +19,8 @@ import { navigateTo } from '../core/renderBridge';
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function attachMainEvents() {
     const logoutBtn = document.getElementById('logout-btn');
-    if (logoutBtn) {
+    if (logoutBtn && logoutBtn.dataset.pfMainBound !== 'true') {
+        logoutBtn.dataset.pfMainBound = 'true';
         logoutBtn.addEventListener('click', async () => {
             const token = localStorage.getItem(CLOUD_TOKEN_KEY);
             logAudit('User Logout', `User ${DB.currentUser.name} logged out.`);
@@ -45,7 +46,8 @@ export function attachMainEvents() {
     }
 
     const resetBtn = document.getElementById('reset-db-btn');
-    if (resetBtn) {
+    if (resetBtn && resetBtn.dataset.pfMainBound !== 'true') {
+        resetBtn.dataset.pfMainBound = 'true';
         resetBtn.addEventListener('click', async () => {
             if (DB.currentUser?.role !== 'Admin') {
                 showToast('Only Admin can reset procurement records.', 'error');

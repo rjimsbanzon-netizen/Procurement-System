@@ -81,7 +81,7 @@ export function renderAuthScreen() {
                         </div>
                     ` : ''}
 
-                    <button type="submit" class="w-full py-3 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold text-sm shadow-md transition-colors flex items-center justify-center space-x-2">
+                    <button type="submit" class="pf-primary-action w-full py-3 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold text-sm shadow-md transition-colors flex items-center justify-center space-x-2">
                         <span>${isSignup ? 'Register Account' : 'Secure Sign In'}</span>
                         <i class="fa-solid fa-arrow-right text-xs"></i>
                     </button>

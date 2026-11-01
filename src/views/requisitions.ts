@@ -5,6 +5,7 @@ import { canManageBidding, hasPermission } from '../domain/permissions';
 import { getAvailableRequisitions, getCurrentUserRequisitions } from '../domain/procurement';
 import { DB, ui } from '../store/state';
 import { CLOUD_API_BASE } from '../services/cloud';
+import { emptyTableRow } from './shared/feedback';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderRequisitionsView() {
@@ -22,7 +23,7 @@ export function renderRequisitionsView() {
                 </div>
 
                 ${hasPermission('create_pr') ? `
-                    <button id="open-create-pr-modal" class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center space-x-2">
+                    <button id="open-create-pr-modal" class="pf-primary-action px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center space-x-2">
                         <i class="fa-solid fa-plus"></i>
                         <span>Create Purchase Requisition</span>
                     </button>
@@ -45,12 +46,7 @@ export function renderRequisitionsView() {
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             ${reqs.length === 0 ? `
-                                <tr>
-                                    <td colspan="7" class="p-8 text-center text-slate-400">
-                                        <i class="fa-solid fa-folder-open text-3xl mb-2"></i>
-                                        <p>No purchase requisitions found.</p>
-                                    </td>
-                                </tr>
+                                ${emptyTableRow(7, 'No purchase requisitions found', 'Create a requisition to begin procurement, or adjust your search to see matching requests.', 'fa-file-signature')}
                             ` : reqs.map(r => `
                                 <tr class="hover:bg-slate-50/80 transition-colors">
                                     <td class="p-4 font-bold text-sky-600">${r.id}</td>

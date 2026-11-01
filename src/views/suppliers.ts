@@ -3,6 +3,7 @@ import { openAddSupplierModal, openRateSupplierModal, viewSupplierRatingsModal }
 import { hasPermission } from '../domain/permissions';
 import { getSupplierRatingStats, isOrderFullyVerified } from '../domain/procurement';
 import { DB } from '../store/state';
+import { emptyPanel } from './shared/feedback';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderSuppliersView() {
@@ -14,7 +15,7 @@ export function renderSuppliersView() {
                     <p class="text-xs text-slate-500">Evaluated vendor profiles, quality compliance, and ratings</p>
                 </div>
                 ${hasPermission('manage_suppliers') ? `
-                    <button data-command="openAddSupplierModal" class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center space-x-2">
+                    <button data-command="openAddSupplierModal" class="pf-primary-action px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center space-x-2">
                         <i class="fa-solid fa-plus"></i>
                         <span>Add New Supplier</span>
                     </button>
@@ -22,6 +23,7 @@ export function renderSuppliersView() {
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                ${DB.suppliers.length===0?`<div class="md:col-span-3">${emptyPanel('No suppliers listed yet', 'Verified and managed suppliers will appear in this directory after they are added.', 'fa-building')}</div>`:''}
                 ${DB.suppliers.map(s => {
                     const stats = getSupplierRatingStats(s.id);
                     const supplierRatings = DB.ratings.filter(r => r.supplierId === s.id);

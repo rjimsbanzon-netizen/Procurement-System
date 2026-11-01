@@ -1,5 +1,6 @@
 /** Time-bound approval substitution. Assigned approvers may request; Admin reviews or submits on their behalf. */
 import type { D1Database } from '@cloudflare/workers-types';
+import {evidenceStatement} from './auditEvidenceRoutes';
 export type DelegationUser = { id:string; name:string; role:string; app_role:string; department:string; status:string; access_revoked:number };
 type Context = {DB:D1Database};
 type Row = Record<string,any>;
@@ -69,6 +70,26 @@ async function overlapping(env:Context,role:string,department:string,startsOn:st
    .bind(role,department,endsOn,startsOn,excludeId??'').first<Row>();
  return Boolean(found);
 }
+/** Prevent cross-role approval cycles (A delegates to B, B to C, C to A), including overlapping pending requests. */
+async function createsDelegationCycle(env:Context,primary:string,delegate:string,startsOn:string,endsOn:string,excludeId=''):Promise<boolean>{
+ if(primary===delegate)return true;
+ const matches=(await env.DB.prepare(`SELECT primary_user_id,delegate_user_id FROM approval_delegations
+    WHERE revoked_at IS NULL AND review_status IN ('Pending','Approved')
+      AND starts_on<=? AND ends_on>=? AND id<>?`)
+  .bind(endsOn,startsOn,excludeId).all<{primary_user_id:string;delegate_user_id:string}>()).results;
+ const graph=new Map<string,string[]>();
+ for(const edge of matches){
+  if(!graph.has(edge.primary_user_id))graph.set(edge.primary_user_id,[]);
+  graph.get(edge.primary_user_id)!.push(edge.delegate_user_id);
+ }
+ // New edge primary -> delegate; if delegate can already reach primary, it forms a cycle.
+ const seen=new Set<string>(),queue=[delegate];
+ while(queue.length){const next=queue.shift()!;if(next===primary)return true;
+  if(seen.has(next))continue;seen.add(next);
+  for(const id of graph.get(next)||[])if(!seen.has(id))queue.push(id);
+ }
+ return false;
+}
 /** Called at sign-off time: pending/rejected requests NEVER grant approval access. */
 export async function actingDelegation(env:Context,user:DelegationUser,role:string,department=''):Promise<Row|null>{
  if(!STEPS.has(role))return null;
@@ -130,6 +151,8 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
    return json({error:'Select an eligible substitute for this approval responsibility. Finance sign-offs must stay separate.'},403,cors);
   const conflict=await verifyFinanceSeparation(env,body.stepRole,delegate!.id,body.startsOn,body.endsOn);
   if(conflict)return json({error:conflict},409,cors);
+  if(await createsDelegationCycle(env,primary!.id,delegate!.id,body.startsOn,body.endsOn))
+   return json({error:'This delegation would create a circular approval chain. Choose another eligible substitute.'},409,cors);
   if(await overlapping(env,body.stepRole,scope,body.startsOn,body.endsOn))
    return json({error:'An overlapping pending or approved delegation exists for these dates. Resolve it before submitting another.'},409,cors);
   const id=crypto.randomUUID(),now=new Date().toISOString();
@@ -143,6 +166,7 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
    .bind(id,body.stepRole,scope,primary!.id,delegate!.id,body.startsOn,body.endsOn,body.reason.trim(),user.id,now,
     body.requestKind,status,admin?user.id:null,admin?now:null,body.stepRole,scope,body.endsOn,body.startsOn).run();
   if(saved.meta.changes!==1)return json({error:'Another delegation was submitted for overlapping dates. Refresh and review the register.'},409,cors);
+  await evidenceStatement(env,user,'approval_delegations',id,'Requested',null,{stepRole:body.stepRole,department:scope,primaryId:primary!.id,delegateId:delegate!.id,startsOn:body.startsOn,endsOn:body.endsOn,requestKind:body.requestKind,status}).run();
   return json({ok:true,id,status},201,cors);
  }
 
@@ -167,6 +191,8 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
     return json({error:'The proposed substitute is no longer eligible.'},409,cors);
    const conflict=await verifyFinanceSeparation(env,entry.step_role,entry.delegate_user_id,entry.starts_on,entry.ends_on);
    if(conflict)return json({error:conflict},409,cors);
+   if(await createsDelegationCycle(env,entry.primary_user_id,entry.delegate_user_id,entry.starts_on,entry.ends_on,id))
+    return json({error:'Approval would create a circular delegation chain.'},409,cors);
    // The conditional update prevents simultaneously approving overlapping pending requests.
    const saved=await env.DB.prepare(`UPDATE approval_delegations SET review_status='Approved',reviewed_by=?,reviewed_at=?,review_note=?
     WHERE id=? AND review_status='Pending' AND revoked_at IS NULL AND NOT EXISTS (
@@ -180,6 +206,9 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
     .bind(user.id,now,body.note.trim(),id).run();
    if(saved.meta.changes!==1)return json({error:'Request already reviewed. Refresh the register.'},409,cors);
   }
+  await evidenceStatement(env,user,'approval_delegations',id,body.decision==='approve'?'Approved':'Rejected',
+    {status:'Pending',primaryId:entry.primary_user_id,delegateId:entry.delegate_user_id,stepRole:entry.step_role},
+    {status:body.decision==='approve'?'Approved':'Rejected',reviewedBy:user.id,reviewedAt:now,note:body.note.trim()}).run();
   return json({ok:true,status:body.decision==='approve'?'Approved':'Rejected'},200,cors);
  }
 
@@ -195,6 +224,9 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
    ?await env.DB.prepare("UPDATE approval_delegations SET review_status='Cancelled',reviewed_at=?,reviewed_by=? WHERE id=? AND review_status='Pending' AND revoked_at IS NULL").bind(now,user.id,id).run()
    :await env.DB.prepare("UPDATE approval_delegations SET revoked_at=?,revoked_by=? WHERE id=? AND review_status='Approved' AND revoked_at IS NULL").bind(now,user.id,id).run();
   if(result.meta.changes!==1)return json({error:'Request changed while you were editing. Refresh and retry.'},409,cors);
+  await evidenceStatement(env,user,'approval_delegations',id,entry.review_status==='Pending'?'Cancelled':'Revoked',
+    {status:entry.review_status,primaryId:entry.primary_user_id,delegateId:entry.delegate_user_id},
+    {status:entry.review_status==='Pending'?'Cancelled':'Revoked',at:now,actor:user.id}).run();
   return json({ok:true,status:entry.review_status==='Pending'?'Cancelled':'Revoked'},200,cors);
  }
  return json({error:'Delegation action not supported.'},404,cors);

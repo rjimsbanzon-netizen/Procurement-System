@@ -2,3 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
+
+# Prevent accidental committed backup copies; git history is the archive.
+*.bak
+*.bak.*

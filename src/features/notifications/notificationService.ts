@@ -1,4 +1,5 @@
 import { DB } from '../../store/state';
+import { getDeadline } from '../../services/sourcing';
 import type { ProcurementRecord, ProcurementState, User } from '../../types/procurement';
 import { getCloudNotificationSnapshot, getCloudMessageAlerts, getCloudContractAlerts, getCloudDelegationAlerts, getCloudReadIds, queueCloudNotificationRead } from './cloudNotificationSync';
 
@@ -257,7 +258,15 @@ export function getNotifications(state: ProcurementState = DB, user: User | null
   if (supplier) {
     state.stockNeeds.filter(need => need.status === 'Published').forEach(need => {
       const alreadyBid = Boolean(supplierId) && state.bids.some(bid => bid.needId === need.id && bid.supplierId === supplierId);
-      if (!alreadyBid) add({
+      const deadline = getDeadline(need.id);
+      const remaining = deadline ? Date.parse(deadline.closesAt) - Date.now() : NaN;
+      // Show deadline-specific alerts only when the verified cloud deadline is available.
+      if (!alreadyBid && deadline && !deadline.manuallyClosed && Number.isFinite(remaining) && remaining > 0 && remaining <= 48 * 60 * 60 * 1000) {
+        add({ id: `bid-deadline:${need.id}:${deadline.closesAt}`, title: 'Bid deadline approaching',
+          description: `${asString(need.title)} · Closes ${new Date(deadline.closesAt).toLocaleString('en-PH')}.`,
+          createdAt: asString(need.createdAt), kind: 'warning', targetTab: 'bidding', targetRecordId: need.id });
+      }
+      if (!alreadyBid && (!deadline || (!deadline.manuallyClosed && remaining > 0))) add({
         id: `need-published:${need.id}`,
         title: 'New bidding opportunity',
         description: `${asString(need.title)} · Bids are open.`,
@@ -328,9 +337,29 @@ export function getNotifications(state: ProcurementState = DB, user: User | null
         targetTab:'approval_delegation',targetRecordId:d.id});
     }
     if(user.id===d.delegate_user_id && d.review_status==='Approved' && !d.revoked_at){
-      add({id:`delegation-assigned:${d.id}`,title:'Temporary approval duty assigned',
-        description:`${d.step_role} · ${d.starts_on} to ${d.ends_on}.`,
+      const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+      const active=d.starts_on<=today&&d.ends_on>=today;
+      add({id:`delegation-assigned:${d.id}`,title:active?'Temporary approval duty is active':'Temporary approval duty assigned',
+        description:`${d.step_role} · ${d.starts_on} to ${d.ends_on}${active?' · Coverage is active.':''}.`,
         createdAt:d.reviewed_at||d.created_at,kind:'info',targetTab:'approval_delegation',targetRecordId:d.id});
+    }
+  });
+
+  // Confirm when temporary coverage starts or expires; do not revive ancient delegations.
+  const localToday=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  getCloudDelegationAlerts(user).forEach(d=>{
+    if(d.review_status!=='Approved'||d.revoked_at || (user.id!==d.primary_user_id && user.id!==d.delegate_user_id))return;
+    const related=user.id===d.primary_user_id?'Your substitute':'Your temporary approval authority';
+    if(d.starts_on===localToday){
+      add({id:`delegation-start:${d.id}:${d.starts_on}`,title:'Delegation coverage starts today',
+        description:`${related} · ${d.step_role}${d.department?` (${d.department})`:''} · ${d.starts_on}–${d.ends_on}.`,
+        createdAt:d.reviewed_at||d.created_at,kind:'info',targetTab:'approval_delegation',targetRecordId:d.id});
+    }
+    const sinceEnd=Date.parse(localToday+'T00:00:00Z')-Date.parse(d.ends_on+'T00:00:00Z');
+    if(sinceEnd>0 && sinceEnd<=7*86400000){
+      add({id:`delegation-ended:${d.id}:${d.ends_on}`,title:'Temporary delegation has ended',
+        description:`${d.step_role}${d.department?` (${d.department})`:''} coverage ended ${d.ends_on}. Original assignments apply again.`,
+        createdAt:d.ends_on+'T23:59:59',kind:'info',targetTab:'approval_delegation',targetRecordId:d.id});
     }
   });
 

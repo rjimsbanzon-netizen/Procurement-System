@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyPanel } from '../shared/feedback';
 import { getDeadline, deadlineIsOpen } from '../../services/sourcing';
 import { canManageBidding } from '../../domain/permissions';
 import { DB } from '../../store/state';
@@ -18,7 +19,7 @@ export function renderStockNeedsView() {
                     <p class="text-xs text-slate-500">Publish procurement needs and receive supplier quotations. Bid comparison and meeting invitations are organized in separate modules.</p>
                 </div>
                 ${canCreateNeed ? `
-                    <button data-command="openCreateStockNeedModal" class="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center space-x-2">
+                    <button data-command="openCreateStockNeedModal" class="pf-primary-action px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center space-x-2">
                         <i class="fa-solid fa-bullhorn"></i>
                         <span>Publish Stock Need</span>
                     </button>
@@ -33,10 +34,7 @@ export function renderStockNeedsView() {
                 </h4>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     ${visibleStockNeeds.length === 0 ? `
-                        <div class="col-span-2 bg-white p-8 text-center rounded-xl border border-slate-200 text-slate-400">
-                            <i class="fa-solid fa-folder-open text-3xl mb-2"></i>
-                            <p class="text-sm">No stock needs published for bidding yet.</p>
-                        </div>
+                        <div class="col-span-full">${emptyPanel('No stock needs published', 'Approved purchase requests can be published as procurement opportunities. Available needs will appear here.', 'fa-box-open')}</div>
                     ` : visibleStockNeeds.map(sn => {
                         const bidCount = DB.bids.filter(b => b.needId === sn.id).length;
                         const userBid = isSupplier ? DB.bids.find(b => b.needId === sn.id && b.supplierId === DB.currentUser.supplierId) : null;
@@ -73,7 +71,7 @@ export function renderStockNeedsView() {
                                         ` : !openForBids ? `
                                             <span class="text-amber-700 font-semibold">Bidding closed</span>
                                         ` : `
-                                            <button data-command="openSubmitBidModal" data-arg1="${sn.id}" class="px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-colors flex items-center space-x-1.5">
+                                            <button data-command="openSubmitBidModal" data-arg1="${sn.id}" class="pf-primary-action px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-colors flex items-center space-x-1.5">
                                                 <i class="fa-solid fa-hand-holding-dollar"></i>
                                                 <span>Apply / Submit Bid</span>
                                             </button>

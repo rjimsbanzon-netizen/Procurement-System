@@ -1,14 +1,28 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DB, ui } from '../store/state';
 import { canAccessTab } from '../domain/permissions';
 import { navigateTo } from '../core/renderBridge';
 import { getNotifications, getUnreadCount } from '../features/notifications/notificationService';
 import procureflowMark from '../procureflow-mark.png';
 
-// App.tsx currently remounts its entire shell on renderApp(). Remember the
-// sidebar position across those remounts instead of jumping back to Overview.
-// The key is account-specific so two users on the same browser stay separate.
+// Remember sidebar position per account even across sign-in transitions.
+// Page refreshes no longer unmount this sidebar.
 const savedSidebarScroll = new Map<string, number>();
+const savedCollapsedGroups = new Map<string, string[]>();
+
+/** Sidebar navigation grouping only; never changes authorization. */
+function getCollapsedGroups(accountId: string): string[] {
+  if (savedCollapsedGroups.has(accountId)) return savedCollapsedGroups.get(accountId)!;
+  try {
+    const stored = JSON.parse(localStorage.getItem(`pf-sidebar-collapsed:${accountId}`) || '[]');
+    const groups = Array.isArray(stored) ? stored.filter((name): name is string => typeof name === 'string') : [];
+    savedCollapsedGroups.set(accountId, groups);
+    return groups;
+  } catch {
+    return [];
+  }
+}
+
 
 type NavItem = [string, string, string];
 type NavSection = { title: string; items: NavItem[] };
@@ -138,7 +152,7 @@ function NavButton({ id, label, icon, badge, onNavigate }: { id: string; label: 
       className={
         'sidebar-nav-button w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ' +
         (active
-          ? 'bg-[#c85b2c] text-white shadow-md shadow-[#c85b2c]/25'
+          ? 'pf-sidebar-active text-white'
           : 'text-slate-300 hover:bg-[#1c2420] hover:text-white')
       }
     >
@@ -156,9 +170,18 @@ export function Sidebar({ isMobileOpen, onClose }: { isMobileOpen: boolean; onCl
   const navRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const scrollKey = String(user?.id ?? user?.username ?? 'anonymous');
+  const [collapsed, setCollapsed] = useState<string[]>(() => getCollapsedGroups(scrollKey));
+  useEffect(() => { setCollapsed(getCollapsedGroups(scrollKey)); }, [scrollKey]);
+  const toggleSection = (title: string) => {
+    setCollapsed(current => {
+      const updated = current.includes(title) ? current.filter(item => item !== title) : [...current, title];
+      savedCollapsedGroups.set(scrollKey, updated);
+      try { localStorage.setItem(`pf-sidebar-collapsed:${scrollKey}`, JSON.stringify(updated)); } catch { /* Storage disabled */ }
+      return updated;
+    });
+  };
 
-  // Restore before paint: React's key={revision} in App.tsx remounts this
-  // component on each navigation, but the selected module stays in view.
+  // Restore before paint when a different signed-in account mounts.
   useLayoutEffect(() => {
     if (navRef.current) {
       navRef.current.scrollTop = savedSidebarScroll.get(scrollKey) ?? 0;
@@ -214,8 +237,11 @@ export function Sidebar({ isMobileOpen, onClose }: { isMobileOpen: boolean; onCl
         >
           {sections.map(section => (
             <div key={section.title} className="sidebar-section mb-5">
-              <div className="sidebar-section-label">{section.title}</div>
-              <div className="mt-2 flex flex-col gap-1.5">
+              <button type="button" className="sidebar-section-label pf-sidebar-group-toggle" aria-expanded={!collapsed.includes(section.title)} aria-controls={`pf-nav-group-${section.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} onClick={() => toggleSection(section.title)}>
+                <span>{section.title}</span>
+                <i className={`fa-solid fa-chevron-down pf-sidebar-group-chevron ${collapsed.includes(section.title) ? 'pf-sidebar-group-collapsed' : ''}`} aria-hidden="true" />
+              </button>
+              <div id={`pf-nav-group-${section.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} className="mt-2 flex flex-col gap-1.5" hidden={collapsed.includes(section.title)}>
                 {section.items.map(([id, label, icon]) => (
                   <NavButton key={id} id={id} label={label} icon={icon} badge={id === 'notifications' ? unread : null} onNavigate={onClose} />
                 ))}

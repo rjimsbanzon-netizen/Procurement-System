@@ -1,3 +1,4 @@
+import { EmptyState, LoadingState } from '../components/FeedbackState';
 import { useEffect, useState, type FormEvent } from 'react';
 import { confirmAction } from '../services/actionDialogs';
 import { DB } from '../store/state';
@@ -78,7 +79,7 @@ export default function SupplierAccreditationPage() {
       <label className="text-xs font-semibold sm:col-span-2">PDF / PNG / JPG / DOCX, max 5 MB<input id="accreditation-file" type="file" required accept=".pdf,.png,.jpg,.jpeg,.docx" onChange={e=>setFile(e.target.files?.[0]||null)} className="mt-1 block w-full rounded border border-slate-300 p-3 text-sm" /></label>
       <div className="sm:col-span-2"><button disabled={busy||!file||!validUntil} className="rounded bg-[#a64f32] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{busy?'Uploading…':'Upload document for review'}</button></div>
     </form>}
-    <section className="space-y-4">{loading?<p className="text-sm text-slate-500">Loading accreditation records…</p>:cases.length?cases.map(row=><article key={row.supplierUserId} className="rounded-xl border border-slate-200 bg-white p-5">
+    <section className="space-y-4">{loading?<LoadingState title="Loading accreditation records" description="Checking submitted supplier documents and review statuses…" />:cases.length?cases.map(row=><article key={row.supplierUserId} className="rounded-xl border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-bold text-slate-900">{row.name}</h3><p className="text-xs text-slate-500">{row.documents.length} document(s) · {row.reviewedAt?'Last review '+new Date(row.reviewedAt).toLocaleString():'Not yet reviewed'}</p></div>
       <span className={'rounded-full px-3 py-1 text-xs font-bold '+(row.status==='Approved'?'bg-emerald-100 text-emerald-800':row.status==='Expired'||row.status==='Rejected'?'bg-rose-100 text-rose-800':'bg-amber-100 text-amber-800')}>{row.status}</span></div>
       {row.missing.length>0 && <p className="mt-2 text-xs text-amber-800">Missing or expired required files: {row.missing.join(', ')}</p>}
@@ -93,6 +94,6 @@ export default function SupplierAccreditationPage() {
         <b>Review was not saved.</b> {reviewErrors[row.supplierUserId]}
       </div>}
       {reviewSuccess[row.supplierUserId] && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{reviewSuccess[row.supplierUserId]}</p>}
-    </article>):<p className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">No accredited supplier records yet.</p>}</section>
+    </article>):<EmptyState icon="fa-id-card" title="No accreditation records yet" description="Supplier submissions will appear here once required registration and permit documents are uploaded." />}</section>
   </div>;
 }

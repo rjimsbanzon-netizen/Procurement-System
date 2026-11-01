@@ -103,7 +103,7 @@ export default function BudgetsPage(){
           <div><p className="text-slate-500 text-xs">Spent</p><strong>{peso(b.spent)}</strong></div>
           <div><p className="text-slate-500 text-xs">Remaining</p><strong className={b.remaining<0?'text-rose-700':'text-emerald-700'}>{peso(b.remaining)}</strong></div>
         </div>
-        <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#aa5638]" style={{width:`${b.allocated?Math.min(100,(b.spent+b.committed)/b.allocated*100):0}%`}}/></div>
+        <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-[#a64f32]" style={{width:`${b.allocated?Math.min(100,(b.spent+b.committed)/b.allocated*100):0}%`}}/></div>
       </article>)}
     </div>
 
@@ -117,7 +117,7 @@ export default function BudgetsPage(){
           </select>
         </label>
         <label className="block text-sm">Allocated amount (PHP)<input type="number" min="0" step="0.01" required value={allocation} onChange={e=>setAllocation(e.target.value)} className="mt-1 w-full border rounded-lg p-2"/></label>
-        <button disabled={busy||!departments.includes(department)||!allocation} className="bg-[#aa5638] text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50">Save allocation</button>
+        <button disabled={busy||!departments.includes(department)||!allocation} className="bg-[#a64f32] text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50">Save allocation</button>
       </form>
       <form onSubmit={e=>{e.preventDefault();void save(()=>financeAPI.saveSettings(Number(financeFrom),Number(financeHeadFrom),Number(adminFrom)),'Approval thresholds saved.')}} className="bg-white border rounded-xl p-5 space-y-3">
         <h3 className="font-bold">Approval rules</h3>
@@ -125,7 +125,7 @@ export default function BudgetsPage(){
         <label className="block text-sm">Require Finance approval from (PHP)<input type="number" min="0" step="0.01" value={financeFrom} onChange={e=>setFinanceFrom(e.target.value)} className="mt-1 w-full border rounded-lg p-2" required/></label>
         <label className="block text-sm">Require Finance Head approval from (PHP)<input type="number" min="0" step="0.01" value={financeHeadFrom} onChange={e=>setFinanceHeadFrom(e.target.value)} className="mt-1 w-full border rounded-lg p-2" required/></label>
         <label className="block text-sm">Require Admin approval from (PHP)<input type="number" min="0" step="0.01" value={adminFrom} onChange={e=>setAdminFrom(e.target.value)} className="mt-1 w-full border rounded-lg p-2" required/></label>
-        <button disabled={busy} className="bg-[#aa5638] text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50">Save rules</button>
+        <button disabled={busy} className="bg-[#a64f32] text-white rounded-lg px-4 py-2 text-sm disabled:opacity-50">Save rules</button>
       </form>
     </div>}
   </section>;

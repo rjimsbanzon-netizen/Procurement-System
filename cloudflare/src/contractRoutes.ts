@@ -24,6 +24,7 @@ async function canView(env:Env,user:User):Promise<boolean>{
 const same=(a:unknown,b:unknown)=>String(a??'').trim().toLowerCase()===String(b??'').trim().toLowerCase();
 function statusOf(row:Row,today:string){
  if(row.terminated_at)return 'Terminated';
+ if(row.lifecycle_status==='Draft')return 'Draft';
  if(row.ends_on<today)return 'Expired';
  if(row.starts_on>today)return 'Upcoming';
  return 'Active';
@@ -35,7 +36,7 @@ async function snapshot(env:Env):Promise<Row>{
 }
 async function getContracts(env:Env,user:User){
  const records=(await env.DB.prepare('SELECT * FROM procurement_contracts ORDER BY ends_on ASC, created_at DESC').all<Row>()).results;
- const visible=user.role==='guest'?records.filter(r=>same(r.supplier_name,user.company_name) || r.supplier_id===`supplier-${user.id}`):records;
+ const visible=user.role==='guest'?records.filter(r=>r.lifecycle_status!=='Draft' && (same(r.supplier_name,user.company_name) || r.supplier_id===`supplier-${user.id}`)):records;
  const today=philippinesToday();
  return visible.map((row:Row):Row=>({...row,price:Number(row.negotiated_price_cents)/100,status:statusOf(row,today),daysUntilExpiry:dayDelta(row.ends_on,today)}));
 }
@@ -44,7 +45,7 @@ async function supplierFor(env:Env,id:string){
  const data=await snapshot(env);
  return Array.isArray(data.suppliers)?data.suppliers.find((s:Row)=>s.id===id):null;
 }
-function alertFor(row:Row){return !row.terminated_at && row.daysUntilExpiry<=Number(row.renewal_notice_days)}
+function alertFor(row:Row){return row.status!=='Draft' && !row.terminated_at && row.daysUntilExpiry<=Number(row.renewal_notice_days)}
 export async function handleContractRoutes(request:Request,env:Env,user:User,cors:HeadersInit):Promise<Response|null>{
  const path=new URL(request.url).pathname;
  if(!path.startsWith('/contracts'))return null;
@@ -65,27 +66,56 @@ export async function handleContractRoutes(request:Request,env:Env,user:User,cor
    const cents=moneyCents(b.price),days=Number(b.renewalNoticeDays);
    if(!reference||!title||!supplierId||terms===null||notes===null||cents===null||
       !dateValid(b.startsOn)||!dateValid(b.endsOn)||b.startsOn>b.endsOn||!Number.isInteger(days)||days<1||days>365||
-      (b.poId!==undefined && (typeof b.poId!=='string'||b.poId.length>100)))
+      (b.poId!==undefined && (typeof b.poId!=='string'||b.poId.length>100))||
+      (b.bidId!==undefined && (typeof b.bidId!=='string'||b.bidId.length>100))||
+      (b.saveAsDraft!==undefined && typeof b.saveAsDraft!=='boolean'))
      return json({error:'Complete contract reference, supplier, dates, price and valid renewal notice (1–365 days).'},400,cors);
    const supplier=await supplierFor(env,supplierId);
    if(!supplier)return json({error:'Choose a supplier from the verified supplier directory.'},409,cors);
-   const state=await snapshot(env),poId=clean(b.poId??'',100)||null;
-   if(poId){
-     const order=(Array.isArray(state.orders)?state.orders:[]).find((o:Row)=>o.id===poId);
-     if(!order)return json({error:'The linked Purchase Order could not be found.'},409,cors);
-     if(order.supplierId && order.supplierId!==supplierId)return json({error:'The Purchase Order belongs to a different supplier.'},409,cors);
+   const state=await snapshot(env),poId=clean(b.poId??'',100)||null,bidId=clean(b.bidId??'',100)||null;
+   const orders=Array.isArray(state.orders)?state.orders:[];
+   const bids=Array.isArray(state.bids)?state.bids:[];
+   const needs=Array.isArray(state.stockNeeds)?state.stockNeeds:[];
+   const order=poId?orders.find((o:Row)=>o.id===poId):null;
+   if(poId&&!order)return json({error:'The linked Purchase Order could not be found.'},409,cors);
+   if(order && (order.supplierId ? order.supplierId!==supplierId : !same(order.supplierName,supplier.name)))
+     return json({error:'The Purchase Order belongs to a different supplier.'},409,cors);
+   const bid=bidId?bids.find((row:Row)=>row.id===bidId):null;
+   if(bidId&&!bid)return json({error:'The linked supplier bid could not be found.'},409,cors);
+   if(bid){
+     if(bid.supplierId ? bid.supplierId!==supplierId : !same(bid.supplierName,supplier.name))
+       return json({error:'The selected bid belongs to a different supplier.'},409,cors);
+     const need=needs.find((row:Row)=>row.id===bid.needId);
+     const awarded=bid.status==='Selected' || need?.selectedBidId===bid.id || orders.some((row:Row)=>row.bidId===bid.id && (row.supplierId===supplierId||same(row.supplierName,supplier.name)));
+     if(!awarded)return json({error:'Only the winning supplier bid can be linked to a contract.'},409,cors);
+     if(order?.bidId && order.bidId!==bid.id)return json({error:'Purchase Order and selected bid do not match.'},409,cors);
    }
+   if(order?.bidId && !bidId)return json({error:'Link the selected bid associated with the Purchase Order.'},409,cors);
+   const lifecycle=b.saveAsDraft===true?'Draft':'Published';
    const now=new Date().toISOString(),id=crypto.randomUUID();
    try{
      await env.DB.batch([
        env.DB.prepare(`INSERT INTO procurement_contracts
-         (id,reference,title,supplier_id,supplier_name,po_id,starts_on,ends_on,negotiated_price_cents,pricing_terms,renewal_notice_days,notes,created_by,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-         .bind(id,reference,title,supplierId,supplier.name,poId,b.startsOn,b.endsOn,cents,terms,days,notes,user.id,now,now),
-       evidenceStatement(env,user,'contracts',reference,'Created',null,{title,supplier:supplier.name,poId,startsOn:b.startsOn,endsOn:b.endsOn,price:b.price,days})
+         (id,reference,title,supplier_id,supplier_name,po_id,bid_id,lifecycle_status,starts_on,ends_on,negotiated_price_cents,pricing_terms,renewal_notice_days,notes,created_by,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+         .bind(id,reference,title,supplierId,supplier.name,poId,bidId,lifecycle,b.startsOn,b.endsOn,cents,terms,days,notes,user.id,now,now),
+       evidenceStatement(env,user,'contracts',reference,'Created',null,{title,supplier:supplier.name,poId,bidId,lifecycle,startsOn:b.startsOn,endsOn:b.endsOn,price:b.price,days})
      ]);
    }catch(e){if(String(e).includes('UNIQUE'))return json({error:'Contract reference already exists.'},409,cors);throw e;}
    return json({ok:true,id},201,cors);
+ }
+ const activate=path.match(/^\/contracts\/([^/]+)\/activate$/);
+ if(activate&&request.method==='POST'){
+   const id=decodeURIComponent(activate[1]),old=await getOne(env,id);
+   if(!old)return json({error:'Contract not found.'},404,cors);
+   if(old.terminated_at||old.lifecycle_status!=='Draft')return json({error:'Only an unterminated draft contract can be activated.'},409,cors);
+   if(old.ends_on<philippinesToday())return json({error:'The contract has already expired; update its validity before activation.'},409,cors);
+   const now=new Date().toISOString();
+   const result=await env.DB.prepare("UPDATE procurement_contracts SET lifecycle_status='Published',updated_at=? WHERE id=? AND lifecycle_status='Draft' AND terminated_at IS NULL")
+     .bind(now,id).run();
+   if(result.meta.changes!==1)return json({error:'Contract changed. Refresh and retry.'},409,cors);
+   await evidenceStatement(env,user,'contracts',String(old.reference||id),'Activated',{lifecycle_status:'Draft'},{lifecycle_status:'Published'}).run();
+   return json({ok:true},200,cors);
  }
  const one=path.match(/^\/contracts\/([^/]+)$/);
  if(one&&request.method==='PUT'){
@@ -117,7 +147,7 @@ export async function handleContractRoutes(request:Request,env:Env,user:User,cor
  if(renew&&request.method==='POST'){
    const id=decodeURIComponent(renew[1]),old=await getOne(env,id);
    if(!old)return json({error:'Contract not found.'},404,cors);
-   if(old.terminated_at)return json({error:'Terminated contracts cannot be renewed.'},409,cors);
+   if(old.terminated_at||old.lifecycle_status==='Draft')return json({error:'Draft or terminated contracts cannot be renewed.'},409,cors);
    const b=await request.json() as Row;
    const reason=clean(b.reason,1000),nextPrice=moneyCents(b.price);
    if(!dateValid(b.newEndsOn)||b.newEndsOn<=old.ends_on||!reason||reason.length<5||nextPrice===null)

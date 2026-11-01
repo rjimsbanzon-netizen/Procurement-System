@@ -72,7 +72,7 @@
         .enterprise-auth-card select:focus {
             border-color: var(--copper);
             box-shadow: 0 0 0 3px rgba(166, 79, 50, .12);
-            background: #eef4fb;
+            background: #fff8f3;
         }
         .enterprise-auth-card button[class~="bg-sky-600"] {
             background: linear-gradient(135deg, var(--copper), #8d4a35);
@@ -409,16 +409,16 @@
             height: 1.25rem;
             padding: 0 .35rem;
             border-radius: 999px;
-            background: #d65b22;
+            background: var(--copper);
             color: #fff;
             font-size: .68rem;
             font-weight: 700;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 2px 8px rgba(214,91,34,.35);
+            box-shadow: 0 2px 8px rgba(166,79,50,.25);
         }
-        .enterprise-sidebar .sidebar-nav-button.bg-\[\#c85b2c\] .sidebar-notification-badge {
+        .enterprise-sidebar .sidebar-nav-button.pf-sidebar-active .sidebar-notification-badge {
             background: rgba(255,255,255,.2);
             box-shadow: none;
         }

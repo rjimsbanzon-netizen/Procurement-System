@@ -1,3 +1,4 @@
+import { EmptyState, LoadingState } from '../components/FeedbackState';
 import { useCallback, useEffect, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { financeAPI } from '../services/finance';
@@ -211,6 +212,9 @@ export default function InvoiceMatchingPage() {
     {error && <div role="alert" className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-sm text-rose-800">{error}</div>}
     {message && <div role="status" className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">{message}</div>}
 
+    <section aria-label="Invoice matching summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {[{label:'Total invoices',value:invoices.length,icon:'fa-file-invoice-dollar'},{label:'Awaiting verification',value:awaiting,icon:'fa-clock'},{label:'Successfully matched',value:matched,icon:'fa-circle-check'}].map(metric=><div key={metric.label} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div><p className="text-xs font-bold uppercase text-slate-500">{metric.label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{loading?'…':metric.value}</p></div><i aria-hidden="true" className={`fa-solid ${metric.icon} text-xl text-[#a64f32]`} /></div>)}
+    </section>
     <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,1fr)] gap-4 items-start">
       {isSupplier ? <form className="bg-white border border-slate-200 rounded-xl p-5 space-y-4" onSubmit={e => void submitInvoice(e)}>
         <div><h3 className="font-bold text-slate-900">Step 1 · Submit your invoice</h3>
@@ -305,7 +309,7 @@ export default function InvoiceMatchingPage() {
           </select>
         </div>
       </div>
-      <div className="overflow-x-auto"><table className="w-full text-left text-sm">
+      <div className="overflow-x-auto"><table className="w-full min-w-[790px] text-left text-sm">
         <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs uppercase"><tr>
           {['Purchase Order / Supplier', 'Invoice', 'Amount', 'Three-way check', 'Status', 'Actions'].map(label => <th className="p-3" key={label}>{label}</th>)}
         </tr></thead>
@@ -329,8 +333,8 @@ export default function InvoiceMatchingPage() {
             {invoice.status === 'Matched' && !isValidMatch(invoice) && <p className="text-xs text-rose-700 mt-2">Previously matched, but the required PO / receipt is now missing. Payment is blocked.</p>}
             {me?.role === 'Admin' && invoice.reasons.includes('Purchase Order is missing.') && <RestoreMissingRecord kind='PO' recordId={invoice.poId} onRestored={refresh}/>}</td>
           </tr>)}
-          {!loading && displayed.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">{invoices.length ? 'No invoices match the filter.' : 'No supplier invoices submitted yet.'}</td></tr>}
-          {loading && <tr><td colSpan={6} className="p-8 text-center text-slate-500">Loading invoices…</td></tr>}
+          {!loading && displayed.length === 0 && <tr><td colSpan={6} className="p-0"><EmptyState title={invoices.length ? 'No invoices match the filter' : 'No supplier invoices yet'} icon="fa-file-invoice" description={invoices.length ? 'Change your search or status filter to find invoices.' : 'Supplier invoices will appear after upload for matching against a signed PO and verified delivery.'} /></td></tr>}
+          {loading && <tr><td colSpan={6} className="p-0"><LoadingState title="Loading supplier invoices" description="Retrieving the latest cloud invoices and matching statuses…" /></td></tr>}
         </tbody>
       </table></div>
       {canVerify && <p className="border-t border-slate-100 bg-slate-50 p-4 text-xs text-slate-600">Finance reviewer: open the supplier invoice, compare its invoice number, date, items and total against the signed PO and verified delivery, then select <strong>Confirm match</strong>. Automatic checks alone do not approve an invoice.</p>}

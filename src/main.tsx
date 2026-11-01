@@ -5,3 +5,6 @@ import './styles/responsive.css';
 import './styles/typography.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
+import './styles/phase1-polish.css';
+
+import './styles/phase4-foundation.css';

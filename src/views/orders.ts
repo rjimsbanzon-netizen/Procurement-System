@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyTableRow } from './shared/feedback';
 import { acceptPurchaseOrder, openRecordDeliveryModal } from '../actions/orderActions';
 import { hasPermission } from '../domain/permissions';
 import { getRemainingOrderQuantity } from '../domain/procurement';
@@ -33,7 +34,7 @@ export function renderOrdersView() {
                         </thead>
                         <tbody class="divide-y divide-slate-200">
                             ${ordersList.length === 0 ? `
-                                <tr><td colspan="8" class="p-8 text-center text-slate-400">No active purchase orders.</td></tr>
+                                ${emptyTableRow(8, 'No purchase orders yet', 'Purchase orders will appear after a supplier is selected and the agreement is finalized.', 'fa-file-invoice-dollar')}
                             ` : ordersList.map(o => `
                                 <tr class="hover:bg-slate-50">
                                     <td class="p-4 font-bold text-sky-600">${o.id}<div class="mt-1 text-xs font-medium text-slate-500">${o.status}</div></td>
@@ -52,7 +53,7 @@ export function renderOrdersView() {
                                                 <i class="fa-solid fa-file-signature mr-1"></i> Review & Sign PO
                                             </button>
                                         ` : hasPermission('record_delivery') && ['Approved & Signed', 'Issued'].includes(o.status) && getRemainingOrderQuantity(o.id) > 0 ? `
-                                            <button data-command="openRecordDeliveryModal" data-arg1="${o.id}" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center space-x-1 mx-auto">
+                                            <button data-command="openRecordDeliveryModal" data-arg1="${o.id}" class="pf-primary-action px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-xs font-semibold shadow-sm transition-colors flex items-center space-x-1 mx-auto">
                                                 <i class="fa-solid fa-truck-ramp-box"></i>
                                                 <span>Log Delivery</span>
                                             </button>

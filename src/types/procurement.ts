@@ -24,20 +24,103 @@ export interface ProcurementRecord {
   id: string;
   [field: string]: any;
 }
+/** Gradually adopted normalized record contracts. Old fields remain available via
+ * ProcurementRecord until legacy HTML-string modules are retired. */
+export interface RequisitionRecord extends ProcurementRecord {
+  department: string;
+  itemTitle: string;
+  specs: string;
+  status: string;
+  quantity: number;
+  unitPrice: number;
+  totalCost: number;
+  requestedBy: string;
+  requestedByUsername?: string;
+  targetDate?: string;
+  createdAt?: string;
+  remarks?: string;
+}
+export interface OrderRecord extends ProcurementRecord {
+  prId: string;
+  supplierId: string;
+  supplierName: string;
+  department: string;
+  itemTitle: string;
+  quantity: number;
+  totalCost: number;
+  status: string;
+  poDate?: string;
+  expectedDate?: string;
+  signedBy?: string;
+  specs?: string;
+  bidId?: string;
+}
+export interface BidRecord extends ProcurementRecord {
+  needId: string;
+  supplierId: string;
+  supplierName: string;
+  status: string;
+  unitPrice: number;
+  totalCost: number;
+  leadTimeDays?: number;
+  submittedAt?: string;
+}
+export interface DeliveryRecord extends ProcurementRecord {
+  poId: string;
+  supplierName: string;
+  department: string;
+  itemTitle: string;
+  complianceStatus: string;
+  orderedQty: number;
+  deliveredQty: number;
+  expectedDate?: string;
+  actualDate?: string;
+  specs?: string;
+  supplierId?: string;
+}
+export interface SupplierRecord extends ProcurementRecord {
+  name: string;
+  category?: string;
+  email?: string;
+  phone?: string;
+  contact?: string;
+  status?: string;
+}
+export interface PaymentRecord extends ProcurementRecord {
+  poId: string;
+  status: string;
+  paymentAmount?: number;
+}
+/** Contracts and invoices are fetched through separate secured cloud APIs. */
+export interface ContractRecord extends ProcurementRecord {
+  supplier_id?: string;
+  po_id?: string | null;
+  bid_id?: string | null;
+  status: 'Draft' | 'Active' | 'Expired' | 'Terminated' | string;
+  starts_on?: string;
+  ends_on?: string;
+  negotiated_price?: number;
+}
+export interface InvoiceRecord extends ProcurementRecord {
+  poId?: string;
+  supplierId?: string;
+  amount?: number;
+  status?: string;
+}
 export interface ProcurementState {
   currentUser: User | null;
   nonAdminUsersPruned: boolean;
   permissions: Record<PermissionRole, string[]>;
   users: User[];
   stockNeeds: ProcurementRecord[];
-  bids: ProcurementRecord[];
+  bids: BidRecord[];
   proposalMeetings: ProcurementRecord[];
-  requisitions: ProcurementRecord[];
-  orders: ProcurementRecord[];
-  deliveries: ProcurementRecord[];
+  requisitions: RequisitionRecord[];
+  orders: OrderRecord[];
+  deliveries: DeliveryRecord[];
   amendments: ProcurementRecord[];
-  payments: ProcurementRecord[];
-  suppliers: ProcurementRecord[];
+  payments: PaymentRecord[];
+  suppliers: SupplierRecord[];
   ratings: ProcurementRecord[];
   auditLogs: ProcurementRecord[];
   accessControl?: ProcurementRecord[];

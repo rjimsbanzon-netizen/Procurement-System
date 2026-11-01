@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { emptyTableRow } from './shared/feedback';
 import { navigateTo } from '../core/renderBridge';
 import { hasPermission } from '../domain/permissions';
 import { getCurrentUserRequisitions, getSupplierRatingStats } from '../domain/procurement';
@@ -107,7 +108,7 @@ export function renderDashboardView() {
                         <p class="text-sky-200 text-sm mt-1">Track the status of requests you submitted.</p>
                     </div>
                     ${hasPermission('create_pr') ? `
-                        <button id="quick-create-pr-btn" class="mt-4 md:mt-0 px-4 py-2.5 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-sm font-semibold shadow-md transition-all flex items-center space-x-2">
+                        <button id="quick-create-pr-btn" class="pf-primary-action mt-4 md:mt-0 px-4 py-2.5 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-sm font-semibold shadow-md transition-all flex items-center space-x-2">
                             <i class="fa-solid fa-plus"></i>
                             <span>New Requisition</span>
                         </button>
@@ -159,7 +160,7 @@ export function renderDashboardView() {
                             </thead>
                             <tbody class="divide-y divide-slate-200">
                                 ${recentRequisitions.length === 0 ? `
-                                    <tr><td colspan="6" class="p-8 text-center text-slate-400">You have not submitted any purchase requests yet.</td></tr>
+                                    ${emptyTableRow(6, 'No recent requests', 'Use New Requisition to submit your first purchase request.', 'fa-file-signature')}
                                 ` : recentRequisitions.map(request => `
                                     <tr class="hover:bg-slate-50/80">
                                         <td class="p-4 font-bold text-sky-600">${request.id}</td>
@@ -199,7 +200,7 @@ export function renderDashboardView() {
                     <p class="text-sky-200 text-sm mt-1">Real-time enterprise metrics & procurement lifecycle monitor</p>
                 </div>
                 ${hasPermission('create_pr') ? `
-                    <button id="quick-create-pr-btn" class="mt-4 md:mt-0 px-4 py-2.5 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-sm font-semibold shadow-md transition-all flex items-center space-x-2">
+                    <button id="quick-create-pr-btn" class="pf-primary-action mt-4 md:mt-0 px-4 py-2.5 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-sm font-semibold shadow-md transition-all flex items-center space-x-2">
                         <i class="fa-solid fa-plus"></i>
                         <span>New Requisition</span>
                     </button>

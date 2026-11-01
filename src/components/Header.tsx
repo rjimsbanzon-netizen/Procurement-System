@@ -56,7 +56,7 @@ export function Header({ onOpenMenu, isMenuOpen }: { onOpenMenu: () => void; isM
       <PwaSupport />
       <NotificationBell />
       <div className="text-right hidden sm:block"><div className="text-sm font-bold text-slate-800">{user?.role==='Admin'?'Admin':user?.name}</div>
-        <div className="text-xs text-sky-600 font-semibold">{positionLabel}</div></div>
+        <div className="text-xs text-[#a64f32] font-semibold">{positionLabel}</div></div>
       <button id="logout-btn" title="Sign Out" type="button" className="p-2 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition-colors">
         <i className="fa-solid fa-right-from-bracket text-lg" /></button>
     </div>
