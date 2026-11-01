@@ -219,12 +219,16 @@ export async function handleAccountRoutes(request: Request, env: Env, me: Identi
 
   if (path === '/account/directory' && request.method === 'GET') {
     const q = (url.searchParams.get('q') || '').trim().slice(0,80);
+    // The Employee Profiles page is employee-only. Apply this before LIMIT so
+    // supplier records cannot crowd employees out of search results.
+    const employeeOnly = url.searchParams.get('type') === 'employees';
     const pattern = `%${q.replace(/[\\%_]/g,'\\$&')}%`;
     // Only approved, discoverable accounts may appear. This directory never
     // returns contact addresses, account secrets, payroll, or leave records.
     const {results} = await env.DB.prepare(`SELECT u.id,u.username,u.name,u.role,u.app_role,u.department,
       u.company_name,u.profile_bio,u.profile_discoverable,u.profile_avatar
       FROM users u WHERE u.id!=? AND u.status='approved' AND u.access_revoked=0 AND u.profile_discoverable=1
+      AND (? = 0 OR u.role IN ('employee','admin'))
       AND (u.name LIKE ? ESCAPE '\\' OR u.username LIKE ? ESCAPE '\\' OR
            u.department LIKE ? ESCAPE '\\' OR u.app_role LIKE ? ESCAPE '\\' OR
            u.company_name LIKE ? ESCAPE '\\' OR EXISTS (
@@ -237,7 +241,7 @@ export async function handleAccountRoutes(request: Request, env: Env, me: Identi
              )
            ))
       ORDER BY u.name COLLATE NOCASE LIMIT 60`)
-      .bind(me.id, pattern, pattern, pattern, pattern, pattern, pattern, pattern).all<Row>();
+      .bind(me.id, employeeOnly ? 1 : 0, pattern, pattern, pattern, pattern, pattern, pattern, pattern).all<Row>();
     const people = results ?? [];
     const appointments = await appointmentMap(env,people);
     return reply({people:people.map(person=>publicPerson(person,appointments))},200,cors);

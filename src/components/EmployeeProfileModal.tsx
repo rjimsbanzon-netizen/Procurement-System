@@ -49,8 +49,8 @@ export function EmployeeProfileModal({ person, onClose, onMessage }: {
       className="w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl max-h-[90dvh]">
       <div className="flex items-start justify-between border-b border-slate-100 bg-[#f7f3ef] px-5 py-5 sm:px-6">
         <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-[#26342d] text-xl font-bold text-white">
-            {info.avatar?<img src={info.avatar} alt="" className="h-full w-full rounded-2xl object-cover"/>:initials(info.name)}
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#26342d] text-xl font-bold text-white">
+            {info.avatar ? <img src={info.avatar} alt="" className="h-full w-full object-cover" /> : initials(info.name)}
           </div>
           <div className="min-w-0">
             <h2 className="break-words text-xl font-bold leading-tight text-slate-900">{info.name}</h2>
@@ -66,7 +66,7 @@ export function EmployeeProfileModal({ person, onClose, onMessage }: {
         </button>
       </div>
       <div className="space-y-5 px-5 py-5 sm:px-6">
-        {loading && <p className="text-sm text-slate-500">Loading verified employee details…</p>}
+        {loading && <p className="text-sm text-slate-500">Loading public profile details…</p>}
         {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
         {!loading && details && <>
           <div className="grid gap-3 sm:grid-cols-2">

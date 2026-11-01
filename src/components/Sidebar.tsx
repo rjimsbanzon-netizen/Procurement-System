@@ -92,6 +92,7 @@ const employeeSections: NavSection[] = [
     title: 'Account & Community',
     items: [
       ['my_profile', 'My Account', 'fa-circle-user'],
+      ['people_directory', 'Employee Profiles', 'fa-address-card'],
       ['people_messages', 'People & Messages', 'fa-comment-dots']
     ]
   },
@@ -131,6 +132,7 @@ const supplierSections: NavSection[] = [
     title: 'Account & Community',
     items: [
       ['my_profile', 'My Account', 'fa-circle-user'],
+      ['people_directory', 'Employee Profiles', 'fa-address-card'],
       ['people_messages', 'People & Messages', 'fa-comment-dots']
     ]
   },

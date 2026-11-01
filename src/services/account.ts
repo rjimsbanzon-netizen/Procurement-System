@@ -6,9 +6,8 @@ export type AccountPerson = {
   positions?:string[]; displayPosition?:string; memberType?:'Employee'|'Admin'|'Supplier';
 };
 export type AccountProfile = AccountPerson & {
-  email:string;
-  emailVerified:boolean;
-  requestedPosition:string;
+  email:string; emailVerified:boolean; requestedPosition:string;
+  /** Optional for compatibility with older Workers; never contains API credentials. */
   emailDeliveryConfigured?:boolean;
 };
 export type DirectMessage = {
@@ -25,7 +24,7 @@ export const accountAPI = {
   changePassword: async(currentPassword:string,newPassword:string) => cloudRequest('/account/password',{method:'POST',body:JSON.stringify({currentPassword,newPassword})}),
   sendVerification: async(email:string) => cloudRequest('/account/email/request',{method:'POST',body:JSON.stringify({email})}),
   verifyEmail: async(code:string) => cloudRequest('/account/email/verify',{method:'POST',body:JSON.stringify({code})}),
-  directory: async(q:string) => (await cloudRequest(`/account/directory?q=${encodeURIComponent(q)}`) as {people:AccountPerson[]}).people,
+  directory: async(q:string, type:'all'|'employees' = 'all') => (await cloudRequest(`/account/directory?q=${encodeURIComponent(q)}${type === 'employees' ? '&type=employees' : ''}`) as {people:AccountPerson[]}).people,
   person: async(id:string) => (await cloudRequest(`/account/people/${encodeURIComponent(id)}`) as {person:AccountPerson}).person,
   conversations: async() => (await cloudRequest('/account/conversations') as {conversations:Conversation[]}).conversations,
   messages: async(id:string) => (await cloudRequest(`/account/messages/${encodeURIComponent(id)}`) as {messages:DirectMessage[];peer:AccountPerson}),

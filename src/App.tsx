@@ -1,5 +1,6 @@
 import AccountPage from './pages/AccountPage';
 import DirectMessagesPage from './pages/DirectMessagesPage';
+import EmployeeProfilesPage from './pages/EmployeeProfilesPage';
 import SupplierMessagesPage from './pages/SupplierMessagesPage';
 import SupplierPerformancePage from './pages/SupplierPerformancePage';
 import {MobileQuickActions} from './components/MobileQuickActions';
@@ -57,7 +58,7 @@ function CurrentPage() {
   switch (ui.currentTab) {
     case 'dashboard': return <DashboardPage />;
     case 'my_profile': return <AccountPage />;
-    case 'people_directory':
+    case 'people_directory': return <EmployeeProfilesPage />;
     case 'people_messages': return <DirectMessagesPage />;
     case 'global_search': return <GlobalSearchPage />;
     case 'supplier_analytics': return <SupplierPerformancePage />;
