@@ -6,7 +6,10 @@ export type AccountPerson = {
   positions?:string[]; displayPosition?:string; memberType?:'Employee'|'Admin'|'Supplier';
 };
 export type AccountProfile = AccountPerson & {
-  email:string; emailVerified:boolean; requestedPosition:string;
+  email:string;
+  emailVerified:boolean;
+  requestedPosition:string;
+  emailDeliveryConfigured?:boolean;
 };
 export type DirectMessage = {
   id:string; sender_id:string; recipient_id:string; body:string; created_at:string; read_at:string|null;
