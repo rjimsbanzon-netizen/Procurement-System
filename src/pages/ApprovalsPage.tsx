@@ -7,6 +7,7 @@ import {DB} from '../store/state';
 import {CLOUD_API_BASE,cloudRequest} from '../services/cloud';
 import { Storage } from '../services/storage';
 import { RestoreMissingRecord } from '../components/RestoreMissingRecord';
+import { delegationAPI, type DelegationRole } from '../services/delegations';
 
 const money=(value:number)=>`₱${value.toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 function approvalIntegrityMessage(r:ApprovalRequest):string|null {
@@ -19,18 +20,21 @@ function approvalIntegrityMessage(r:ApprovalRequest):string|null {
 }
 export default function ApprovalsPage(){
   const [items,setItems]=useState<ApprovalRequest[]>([]);
+  const [delegatedRoles,setDelegatedRoles]=useState<DelegationRole[]>([]);
+  const [delegatedDepartments,setDelegatedDepartments]=useState<string[]>([]);
   const [settings,setSettings]=useState<FinanceSettings|null>(null);
   const [busy,setBusy]=useState(false); const [loaded,setLoaded]=useState(false); const [error,setError]=useState(''); const [note,setNote]=useState('');
   const me=DB.currentUser;
   const refresh=useCallback(async()=>{
     try {
       requireFinanceCloud();
-      const [a,s,latest]=await Promise.all([
+      const [a,s,latest,delegation]=await Promise.all([
         financeAPI.approvals(), financeAPI.settings(),
-        cloudRequest('/enterprise-state') as Promise<{data?:{requisitions?:typeof DB.requisitions}}>
+        cloudRequest('/enterprise-state') as Promise<{data?:{requisitions?:typeof DB.requisitions}}>,
+        delegationAPI.list().catch(()=>({activeRoles:[] as DelegationRole[],activeDepartments:[] as string[]}))
       ]);
       if(Array.isArray(latest?.data?.requisitions)) DB.requisitions=latest.data.requisitions;
-      setItems(a.requests);setSettings(s);setError('');
+      setItems(a.requests);setSettings(s);setDelegatedRoles(delegation.activeRoles);setDelegatedDepartments(delegation.activeDepartments||[]);setError('');
     }
     catch(e){setError(e instanceof Error?e.message:String(e));}
     finally {setLoaded(true);}
@@ -41,23 +45,24 @@ export default function ApprovalsPage(){
     a=>a.step_role==='Department Head'&&a.department===department&&a.user_id===me?.id
   )??false;
   const pending=loaded&&settings?DB.requisitions.filter(pr=>
-    pr.status==='Pending'&&!existing.has(pr.id)&& (me?.role==='Admin'||(isAssignedDepartmentHead(pr.department)&&me?.department===pr.department))
+    pr.status==='Pending'&&!existing.has(pr.id)&& (me?.role==='Admin'||(isAssignedDepartmentHead(pr.department)&&me?.department===pr.department)||delegatedDepartments.some(d=>d.trim().toLowerCase()===pr.department.trim().toLowerCase()))
   ):[];
   const canDecide=(r:ApprovalRequest)=>{
     const step=r.steps.find(s=>s.number===r.currentStep);
     if(!step||r.status!=='Pending'||approvalIntegrityMessage(r)||r.requestedBy===me?.id)return false;
     if(step.role==='Department Head')return false; // Request submission is not an approval.
     if(step.role==='Admin')return me?.role==='Admin' && r.financeHead?.status!=='Pending';
-    if(step.role==='Procurement Head')return me?.role==='Procurement Head';
-    return settings?.assignments.some(a=>a.step_role===step.role&&a.user_id===me?.id&&(step.role==='Finance Officer'||a.department===r.department))??false;
+    if(step.role==='Procurement Head')return me?.role==='Procurement Head'||delegatedRoles.includes('Procurement Head');
+    return delegatedRoles.includes(step.role as DelegationRole)||(settings?.assignments.some(a=>a.step_role===step.role&&a.user_id===me?.id&&(step.role==='Finance Officer'||a.department===r.department))??false);
   };
   const isAssignedFinanceHead = settings?.assignments.some(a =>
     a.step_role==='Department Head' && isFinanceDepartment(a.department) && a.user_id===me?.id
   ) ?? false;
   const canSignFinanceHead=(r:ApprovalRequest)=>
-    isAssignedFinanceHead && r.status==='Pending' && r.financeHead?.status==='Pending' &&
+    (isAssignedFinanceHead||delegatedRoles.includes('Finance Head')) && r.status==='Pending' && r.financeHead?.status==='Pending' &&
     r.requestedBy!==me?.id && !approvalIntegrityMessage(r) &&
     r.steps.some(step=>step.role==='Finance Officer'&&step.status==='Approved') &&
+    !delegatedRoles.includes('Finance Officer') && !r.steps.some(s=>s.role==='Finance Officer'&&s.decidedBy===me?.id) &&
     !settings?.assignments.some(a=>a.step_role==='Finance Officer'&&a.user_id===me?.id);
   const financeHeadDecision=async(r:ApprovalRequest,decision:'approve'|'reject')=>{
     const comment=await requestInput({

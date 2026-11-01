@@ -48,7 +48,7 @@ export function attachMainEvents() {
     if (resetBtn) {
         resetBtn.addEventListener('click', async () => {
             if (DB.currentUser?.role !== 'Admin') {
-                showToast('Only the Administrator can reset procurement records.', 'error');
+                showToast('Only Admin can reset procurement records.', 'error');
                 return;
             }
             const confirmation = await requestInput({
@@ -515,7 +515,7 @@ export function attachMainEvents() {
                 return;
             }
             if (!supplier) {
-                showToast('Your account is missing its supplier profile. Contact the administrator to link your company profile.', 'error');
+                showToast('Your account is missing its supplier profile. Contact Admin to link your company profile.', 'error');
                 return;
             }
             if (DB.bids.some(item => item.needId === need.id && item.supplierId === supplier.id)) {

@@ -36,8 +36,12 @@ export function canAccessTab(tab) {
     switch (tab) {
         case 'dashboard': return !isSupplier || hasPermission('view_supplier_portal');
         case 'notifications': return true;
+        case 'global_search': return !isSupplier;
+        case 'supplier_analytics': return isSupplier || ['Admin','Procurement Head','Procurement Officer'].includes(getCurrentPermissionRole() || '');
+        case 'approval_delegation': return !isSupplier;
+        case 'contracts': return isSupplier || ['Admin','Procurement Head','Procurement Officer','Finance Officer','Finance Head'].includes(getCurrentPermissionRole() || '');
         case 'approvals': return !isSupplier;
-        case 'budgets': return !isSupplier;
+        case 'budgets': return ['Admin','Department Head','Procurement Head','Finance Officer','Finance Head'].includes(getCurrentPermissionRole() || '');
         case 'reports': return !isSupplier;
         case 'delivery_discrepancies': return true; // supplier only sees its own issues in D1
         case 'inventory': return !isSupplier;

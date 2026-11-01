@@ -1,6 +1,6 @@
 import { DB } from '../../store/state';
 import type { ProcurementRecord, ProcurementState, User } from '../../types/procurement';
-import { getCloudNotificationSnapshot, getCloudMessageAlerts, getCloudReadIds, queueCloudNotificationRead } from './cloudNotificationSync';
+import { getCloudNotificationSnapshot, getCloudMessageAlerts, getCloudContractAlerts, getCloudDelegationAlerts, getCloudReadIds, queueCloudNotificationRead } from './cloudNotificationSync';
 
 /**
  * Notifications are derived from existing procurement records.
@@ -159,7 +159,7 @@ function historyFromAudit(state: ProcurementState, user: User): ProcurementNotif
     const record = records[category]?.find(r => asString(r.id).toLowerCase() === reference.toLowerCase());
 
     // Except for a published stock need, do not show details of deleted or
-    // unrelated business records to a non-administrator.
+    // unrelated business records to a non-Admin.
     if (!admin && !record) return [];
     if (employee) {
       if (category !== 'pr' || !record || !isOwner(record, user)) return [];
@@ -303,6 +303,36 @@ export function getNotifications(state: ProcurementState = DB, user: User | null
       });
     });
   }
+
+  // D1 contract expiry notifications use the configured notice period;
+  // stable IDs reset unread when a contract is renewed with a different expiration.
+  getCloudContractAlerts(user).forEach(contract=>{
+    add({id:`contract-expiry:${contract.id}:${contract.endsOn}`,
+      title:contract.status==='Expired'?'Contract expired':'Contract renewal approaching',
+      description:`${contract.reference} · ${contract.supplierName} · ${contract.status==='Expired'?'Expired':'Expires'} ${contract.endsOn}.`,
+      createdAt:contract.updatedAt,kind:'warning',targetTab:'contracts',targetRecordId:contract.id});
+  });
+
+  // Admin reviews primary approvers' leave/delegation requests. The same cloud
+  // register also tells the primary and substitute about completed decisions.
+  getCloudDelegationAlerts(user).forEach(d=>{
+    if(user.role==='Admin' && d.review_status==='Pending' && !d.revoked_at){
+      add({id:`delegation-pending:${d.id}`,title:'Delegation request needs review',
+        description:`${d.primary_name} · ${d.step_role} · ${d.starts_on} to ${d.ends_on}.`,
+        createdAt:d.created_at,kind:'action',targetTab:'approval_delegation',targetRecordId:d.id});
+    }
+    if(user.id===d.primary_user_id && ['Approved','Rejected'].includes(d.review_status)){
+      add({id:`delegation-reviewed:${d.id}:${d.review_status}`,title:`Delegation request ${d.review_status.toLowerCase()}`,
+        description:`${d.step_role} · ${d.starts_on} to ${d.ends_on}${d.review_note?` · ${d.review_note}`:''}`,
+        createdAt:d.reviewed_at||d.created_at,kind:d.review_status==='Rejected'?'warning':'success',
+        targetTab:'approval_delegation',targetRecordId:d.id});
+    }
+    if(user.id===d.delegate_user_id && d.review_status==='Approved' && !d.revoked_at){
+      add({id:`delegation-assigned:${d.id}`,title:'Temporary approval duty assigned',
+        description:`${d.step_role} · ${d.starts_on} to ${d.ends_on}.`,
+        createdAt:d.reviewed_at||d.created_at,kind:'info',targetTab:'approval_delegation',targetRecordId:d.id});
+    }
+  });
 
   // Cloudflare messages become ordinary read/unread alerts. The Worker has
   // already checked account access and removed messages sent by this user.

@@ -45,4 +45,5 @@ export interface ProcurementState {
 export type Tab = 'dashboard' | 'requisitions' | 'bidding' | 'orders' | 'delivery'
   | 'amendments' | 'payments' | 'suppliers' | 'audit' | 'users' | 'access_control'
   | 'notifications' | 'tracking' | 'documents' | 'pdf_generator'
-  | 'bidding_deadlines' | 'bid_comparison' | 'bid_evaluation' | 'proposal_meetings';
+  | 'bidding_deadlines' | 'bid_comparison' | 'bid_evaluation' | 'proposal_meetings'
+  | 'global_search' | 'approval_delegation' | 'contracts' | 'supplier_analytics';

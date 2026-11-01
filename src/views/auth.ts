@@ -77,7 +77,7 @@ export function renderAuthScreen() {
                     ${isSignup ? `
                         <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
                             <i class="fa-solid fa-shield-halved mr-1"></i>
-                            New user accounts require Administrator verification. If your request was rejected by mistake, resubmit with the same username, email, and password.
+                            New user accounts require Admin verification. If your request was rejected by mistake, resubmit with the same username, email, and password.
                         </div>
                     ` : ''}
 

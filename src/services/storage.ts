@@ -117,7 +117,7 @@ export class Storage {
 
     static async reset() {
         if (DB.currentUser?.role !== 'Admin') {
-            throw new Error('Administrator access is required to clear procurement records.');
+            throw new Error('Admin access is required to clear procurement records.');
         }
         const admin = DB.currentUser;
         const freshState = Storage.empty();
@@ -146,11 +146,11 @@ export class Storage {
                 user: admin.name,
                 role: 'Admin',
                 action: 'Procurement Records Reset',
-                details: 'Administrator cleared local procurement records and requisition history.'
+                details: 'Admin cleared local procurement records and requisition history.'
             }];
         }
         // Prevent this browser from retaining old notification-read markers for
-        // reference numbers reused after an administrator clears the workspace.
+        // reference numbers reused after an Admin clears the workspace.
         Object.keys(localStorage).filter(key => key.startsWith('procureflow_read_notifications_v1_'))
             .forEach(key => localStorage.removeItem(key));
         setDB(freshState);

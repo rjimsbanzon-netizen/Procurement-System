@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NotificationBell } from '../features/notifications/NotificationBell';
+import {PwaSupport} from './PwaSupport';
 import { loadStaffAssignments, getEffectivePosition } from '../domain/staffPositions';
 import type { StaffAssignment } from '../domain/staffPositions';
 import { DB, ui } from '../store/state';
@@ -11,6 +12,10 @@ const MODULE_TITLES: Record<string, string> = {
   bid_comparison: 'Submitted Vendor Bids & Comparison',
   bid_evaluation: 'Supplier Bid Evaluation',
   proposal_meetings: 'Proposal Meetings',
+  global_search: 'Global Search & Filters',
+  approval_delegation: 'Approval Delegation',
+  contracts: 'Contract Management',
+  supplier_analytics: 'Supplier Performance Analytics',
 };
 
 export function Header() {
@@ -40,6 +45,7 @@ export function Header() {
     <div className="flex items-center space-x-3"><span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Module:</span>
       <h1 className="text-lg font-bold text-slate-800 capitalize">{MODULE_TITLES[ui.currentTab] || ui.currentTab.replace(/_/g, ' ')}</h1></div>
     <div className="flex items-center space-x-4">
+      <PwaSupport />
       <NotificationBell />
       <div className="text-right hidden sm:block"><div className="text-sm font-bold text-slate-800">{user?.role==='Admin'?'Admin':user?.name}</div>
         <div className="text-xs text-sky-600 font-semibold">{positionLabel}</div></div>

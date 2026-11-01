@@ -44,7 +44,7 @@ function position(name: string, department: string, detail: string, source: Effe
  */
 export function getEffectivePosition(user: StaffAccount, assignments: readonly StaffAssignment[]): EffectivePosition {
   if (user.role === 'Admin')
-    return position('Admin', 'Executive', 'Protected administrator account', 'account');
+    return position('Admin', 'Executive', 'Protected Admin account', 'account');
   if (user.role === 'Supplier')
     return position('Supplier', user.companyName || user.department || 'External Vendor', 'Supplier portal account', 'account');
 
@@ -54,7 +54,7 @@ export function getEffectivePosition(user: StaffAccount, assignments: readonly S
     const result = position('Head', 'Procurement', 'Procurement Head · Procurement department', 'account');
     if (user.department && !same(user.department, 'Procurement')) {
       result.accountDepartmentMismatch = true;
-      result.detail = `Procurement Head belongs to Procurement. The account profile currently says ${user.department}; an administrator should correct the saved account department.`;
+      result.detail = `Procurement Head belongs to Procurement. The account profile currently says ${user.department}; Admin should correct the saved account department.`;
     }
     return result;
   }

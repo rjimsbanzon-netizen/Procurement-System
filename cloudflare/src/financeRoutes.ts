@@ -1,5 +1,6 @@
 /** ProcureFlow features 6–8. Additive, authenticated D1 routes; no user-role migration. */
 import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import { actingDelegation } from './delegationRoutes';
 
 export interface FinanceEnv { DB: D1Database; DOCUMENTS: KVNamespace }
 export interface FinanceUser {
@@ -115,6 +116,7 @@ function canSeeDepartment(user: FinanceUser, dept: string):boolean {
 async function canApproveStep(env:FinanceEnv,user:FinanceUser,role:string,department:string):Promise<boolean> {
   if(role==='Admin')return user.role==='admin';
   if(role==='Department Head')return false; // The Department Head submits requests but never approves their own PR.
+  if(await actingDelegation(env, {...user,status:'approved',access_revoked:0,name:user.name},role))return true;
   if(role==='Procurement Head') {
     if(user.app_role!=='Procurement Head')return false;
     // When a Procurement Head is appointed, only the D1-appointed account
@@ -139,8 +141,12 @@ async function approvalList(env:FinanceEnv,user:FinanceUser,data:Snapshot) {
   const steps=(await env.DB.prepare('SELECT * FROM pr_approval_steps ORDER BY pr_id,step_no').all<Row>()).results;
   const headReviews=(await env.DB.prepare('SELECT * FROM finance_head_signoffs').all<Row>()).results;
   const financeHead=await assignedFinanceHead(env);
+  const delegateHead=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Finance Head');
+  const delegateProcurement=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Procurement Head');
+  const delegateFinance=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Finance Officer');
   return requests.filter(r=>canSeeDepartment(user,r.department)||r.requested_by===user.id ||
-    (financeHead?.user_id===user.id && headReviews.some(h=>h.pr_id===r.pr_id)))
+    Boolean(delegateProcurement||delegateFinance) ||
+    ((financeHead?.user_id===user.id||delegateHead) && headReviews.some(h=>h.pr_id===r.pr_id)))
     .map(r=>{
       const head=headReviews.find(h=>h.pr_id===r.pr_id);
       return {prId:r.pr_id,requestedBy:r.requested_by,department:r.department,amount:amount(r.amount_cents),status:r.status,currentStep:r.current_step,totalSteps:r.total_steps,createdAt:r.created_at,pr:data.requisitions.find(p=>p.id===r.pr_id)??null,
@@ -201,7 +207,11 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     const {data}=await snapshot(env);
     const all=await budgetStatus(env,data);
     const financeAssigned = await canApproveStep(env,user,'Finance Officer','*');
-    return reply({budgets:all.filter(b=>financeAssigned||canSeeDepartment(user,b.department))},200,cors);
+    const appointedDepartments=(await env.DB.prepare("SELECT department FROM finance_approvers WHERE step_role='Department Head' AND user_id=?").bind(user.id).all<{department:string}>()).results
+      .map(row=>row.department).filter(dept=>same(dept,user.department));
+    const visible=all.filter(b=>admin || user.app_role==='Procurement Head' || financeAssigned ||
+      appointedDepartments.some(dept=>same(dept,b.department)));
+    return reply({budgets:visible},200,cors);
   }
   const paymentAuthRoute=path.match(/^\/finance\/payment-authority\/([^/]+)$/);
   if(paymentAuthRoute&&method==='GET') {
@@ -311,7 +321,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     return reply({ok:true},200,cors);
   }
 
-  // Only an administrator may correct the saved home department of an
+  // Only Admin may correct the saved home department of an
   // existing Procurement Head account. This never changes historical PRs.
   if(path==='/finance/staff/procurement-department'&&method==='PUT') {
     if(!admin)return reply({error:'Admin only.'},403,cors);
@@ -432,8 +442,9 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     if(!departmentHead) {
       return reply({error:`Assign a Department Head for ${pr.department} under Staff Assignments before submitting this requisition.`},409,cors);
     }
-    if(!admin && (departmentHead.user_id!==user.id || !same(user.department,pr.department))) {
-      return reply({error:`Only the assigned Department Head for ${pr.department} can submit this requisition. Ask the administrator to assign them under Staff Assignments.`},403,cors);
+    const delegatedDepartmentHead=!admin && await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Department Head',pr.department);
+    if(!admin && !((departmentHead.user_id===user.id && same(user.department,pr.department)) || delegatedDepartmentHead)) {
+      return reply({error:`Only the assigned Department Head for ${pr.department}, Admin, or an approved substitute for that department may submit this requisition.`},403,cors);
     }
     const cents=toCents(pr.totalCost);
     if(!Number.isSafeInteger(cents))return reply({error:'Invalid PR amount.'},400,cors);
@@ -457,9 +468,9 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     const now=new Date().toISOString();
     try {
       await env.DB.batch([
-        env.DB.prepare('INSERT INTO pr_approval_requests(pr_id,department,amount_cents,current_step,total_steps,requested_by,created_at) VALUES(?,?,?,2,?,?,?)').bind(pr.id,pr.department,cents,steps.length,departmentHead.user_id,now),
+        env.DB.prepare('INSERT INTO pr_approval_requests(pr_id,department,amount_cents,current_step,total_steps,requested_by,created_at) VALUES(?,?,?,2,?,?,?)').bind(pr.id,pr.department,cents,steps.length,admin?departmentHead.user_id:user.id,now),
         env.DB.prepare("INSERT INTO pr_approval_steps(pr_id,step_no,step_role,status,comment,decided_at) VALUES(?,1,'Department Head','Approved',?,?)")
-          .bind(pr.id,'Request submitted by Department Head; this is not an approval.',now),
+          .bind(pr.id,delegatedDepartmentHead?'Request submitted by authorized Department Head substitute; this is not an approval.':'Request submitted by Department Head; this is not an approval.',now),
         ...steps.slice(1).map((role,i)=>env.DB.prepare('INSERT INTO pr_approval_steps(pr_id,step_no,step_role) VALUES(?,?,?)').bind(pr.id,i+2,role)),
         ...(requiresHead?[env.DB.prepare("INSERT INTO finance_head_signoffs(pr_id,status) VALUES(?,'Pending')").bind(pr.id)]:[])
       ]);
@@ -515,14 +526,16 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     if(!['approve','reject'].includes(body.decision)||typeof body.comment!=='string'||body.comment.length>1000||(body.decision==='reject'&&!body.comment.trim()))
       return reply({error:'Valid Finance Head decision required; rejection must include a reason.'},400,cors);
     const head=await assignedFinanceHead(env);
-    if(!activeFinanceEmployee(head)||head?.user_id!==user.id)
-      return reply({error:'Only the assigned Finance Head may authorize this high-value PR.'},403,cors);
+    const delegatedHead=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Finance Head');
+    if((!activeFinanceEmployee(head)||head?.user_id!==user.id) && !delegatedHead)
+      return reply({error:'Only the assigned Finance Head or their active authorized delegate may review this high-value PR.'},403,cors);
     const requestRow=await env.DB.prepare('SELECT * FROM pr_approval_requests WHERE pr_id=?').bind(prId).first<Row>();
     const signoff=await env.DB.prepare('SELECT status FROM finance_head_signoffs WHERE pr_id=?').bind(prId).first<Row>();
     if(!requestRow||requestRow.status!=='Pending'||signoff?.status!=='Pending')return reply({error:'Finance Head authorization is not pending.'},409,cors);
     if(requestRow.requested_by===user.id)return reply({error:'You cannot authorize a PR you submitted.'},403,cors);
-    const financeStep=await env.DB.prepare("SELECT status FROM pr_approval_steps WHERE pr_id=? AND step_role='Finance Officer'").bind(prId).first<Row>();
+    const financeStep=await env.DB.prepare("SELECT status,decided_by FROM pr_approval_steps WHERE pr_id=? AND step_role='Finance Officer'").bind(prId).first<Row>();
     if(financeStep?.status!=='Approved')return reply({error:'Finance Officer must approve before Finance Head review.'},409,cors);
+    if(financeStep.decided_by===user.id)return reply({error:'Finance Officer and Finance Head authorizations must be performed by different people.'},403,cors);
     const {data,text}=await snapshot(env);
     const pr=data.requisitions.find(r=>r.id===prId);
     if(!pr||pr.status!=='Pending'||toCents(pr.totalCost)!==Number(requestRow.amount_cents)||!same(pr.department,requestRow.department))
@@ -670,7 +683,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   // The Admin may restore ONE missing original record from a trusted JSON backup.
   // Never manufacture a PR or PO from incomplete workflow metadata.
   if(path==='/finance/admin/restore-record'&&method==='POST') {
-    if(!admin)return reply({error:'Administrator account required.'},403,cors);
+    if(!admin)return reply({error:'Admin account required.'},403,cors);
     const body=await request.json() as Row;
     if(!['PR','PO'].includes(body.kind)||!body.record||typeof body.record!=='object'||Array.isArray(body.record))
       return reply({error:'A saved PR or PO object from a backup is required.'},400,cors);
@@ -681,7 +694,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       return reply({error:'The backup record has an invalid reference.'},400,cors);
     if(JSON.stringify(record).length>20_000)return reply({error:'The selected record is too large.'},413,cors);
     const {data,text}=await snapshot(env);
-    if(!text)return reply({error:'No shared procurement snapshot exists. Contact an administrator.'},409,cors);
+    if(!text)return reply({error:'No shared procurement snapshot exists. Contact Admin.'},409,cors);
     const original=JSON.parse(text) as Record<string,unknown>;
     const records=kind==='PR'?data.requisitions:data.orders;
     if(records.some(item=>item.id===record.id))return reply({error:`${record.id} already exists; no replacement was made.`},409,cors);
@@ -736,7 +749,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   // A full reset must also clear the D1 approvals and invoice rows; a normal
   // enterprise-state PUT only clears JSON and leaves misleading orphan history.
   if(path==='/finance/admin/reset-workspace'&&method==='POST') {
-    if(!admin)return reply({error:'Only the Administrator can reset procurement history.'},403,cors);
+    if(!admin)return reply({error:'Only Admin can reset procurement history.'},403,cors);
     const body=await request.json() as Row;
     if(body.confirmation!=='RESET')return reply({error:'Type RESET to confirm the complete procurement history reset.'},400,cors);
     const {text}=await snapshot(env);
@@ -755,6 +768,8 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       env.DB.prepare('DELETE FROM delivery_discrepancies'),
       env.DB.prepare('DELETE FROM verified_inventory_movements'),
       env.DB.prepare('DELETE FROM verified_inventory_receipts'),
+      env.DB.prepare('DELETE FROM procurement_contract_renewals'),
+      env.DB.prepare('DELETE FROM procurement_contracts'),
       env.DB.prepare('DELETE FROM supplier_invoices'),
       env.DB.prepare('DELETE FROM pr_approval_steps'),
       env.DB.prepare('DELETE FROM pr_approval_requests'),

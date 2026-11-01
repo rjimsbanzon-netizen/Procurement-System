@@ -143,13 +143,13 @@ export async function signInToCloud(username, password) {
         body: JSON.stringify({ username, password })
     }, null);
     if (response.pending) {
-        throw new Error('Your registration is awaiting administrator verification.');
+        throw new Error('Your registration is awaiting Admin verification.');
     }
     if (response.rejected) {
         throw new Error('This account was rejected. Choose Register Account and resubmit using the same username, email, and password.');
     }
     if (response.accessRevoked) {
-        throw new Error('Access to this account has been revoked. Contact an administrator.');
+        throw new Error('Access to this account has been revoked. Contact Admin.');
     }
     if (!response.user || !response.token) {
         throw new Error('Invalid username or password.');
@@ -187,8 +187,8 @@ export async function registerCloudAccount(account) {
     }, null);
     showToast(
         response.reapplied
-            ? 'Your registration has been resubmitted for administrator review.'
-            : 'Registration submitted. An administrator must verify your account before you can sign in.',
+            ? 'Your registration has been resubmitted for Admin review.'
+            : 'Registration submitted. Admin must verify your account before you can sign in.',
         'success'
     );
     ui.authMode = 'login';

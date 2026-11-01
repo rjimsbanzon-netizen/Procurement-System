@@ -1,6 +1,9 @@
 import { CLOUD_API_BASE, CLOUD_TOKEN_KEY, cloudRequest } from '../../services/cloud';
 import { DB } from '../../store/state';
 import type { ProcurementRecord, User } from '../../types/procurement';
+import type { ContractAlert } from '../../services/contracts';
+import type { Delegation } from '../../services/delegations';
+import { canAccessTab } from '../../domain/permissions';
 
 /**
  * Read/unread receipts live in D1, keyed by the authenticated user's ID.
@@ -19,6 +22,8 @@ type AccountCache = {
   queued: Set<string>;
   snapshot: NotificationDataSnapshot | null;
   messageAlerts: CloudMessageAlert[];
+  contractAlerts: ContractAlert[];
+  delegationAlerts: Delegation[];
   status: CloudNotificationStatus;
   lastError: string | null;
 };
@@ -39,7 +44,7 @@ function storeFor(user: User): AccountCache {
   const id = accountId(user);
   let store = stores.get(id);
   if (!store) {
-    store = { read: new Set(), queued: new Set(), snapshot: null, messageAlerts: [],
+    store = { read: new Set(), queued: new Set(), snapshot: null, messageAlerts: [], contractAlerts: [], delegationAlerts: [],
       status: CLOUD_API_BASE ? 'connecting' : 'local', lastError: null };
     stores.set(id, store);
   }
@@ -69,6 +74,12 @@ export function getCloudNotificationSnapshot(user: User | null = DB.currentUser)
 
 export function getCloudMessageAlerts(user: User | null = DB.currentUser): readonly CloudMessageAlert[] {
   return user ? storeFor(user).messageAlerts : [];
+}
+export function getCloudContractAlerts(user: User | null = DB.currentUser): readonly ContractAlert[] {
+  return user ? storeFor(user).contractAlerts : [];
+}
+export function getCloudDelegationAlerts(user: User | null = DB.currentUser): readonly Delegation[] {
+  return user ? storeFor(user).delegationAlerts : [];
 }
 
 function localReadIds(user: User): string[] {
@@ -124,7 +135,7 @@ async function refreshCloudNotifications(): Promise<void> {
   const store = storeFor(user);
   try {
     const canMessage = ['Admin', 'Procurement Head', 'Procurement Officer', 'Supplier'].includes(user.role);
-    const [receiptsResult, workspaceResult, messagesResult] = await Promise.all([
+    const [receiptsResult, workspaceResult, messagesResult, contractResult, delegationResult] = await Promise.all([
       cloudRequest('/notifications/read'),
       cloudRequest('/enterprise-state'),
       canMessage ? cloudRequest('/sourcing/message-alerts').catch((error: unknown) => {
@@ -133,6 +144,14 @@ async function refreshCloudNotifications(): Promise<void> {
         console.warn('Message alerts unavailable; confirm the latest sourcingRoutes.ts is deployed.', error);
         return null;
       }) : Promise.resolve(null),
+      (canAccessTab('contracts') ? cloudRequest('/contracts/alerts') : Promise.resolve(null)).catch((error: unknown) => {
+        console.warn('Contract renewal alerts unavailable; apply migration 0013 and redeploy the Worker.',error);
+        return null;
+      }),
+      (!['Supplier'].includes(user.role) ? cloudRequest('/delegations') : Promise.resolve(null)).catch((error: unknown) => {
+        console.warn('Delegation notifications unavailable; apply migration 0014 and redeploy the Worker.', error);
+        return null;
+      }),
     ]);
     const receipts = receiptsResult as { readIds?: unknown };
     const workspace = workspaceResult as { data?: unknown };
@@ -154,6 +173,21 @@ async function refreshCloudNotifications(): Promise<void> {
       }
     }
 
+    if(contractResult && typeof contractResult==='object' && Array.isArray((contractResult as {alerts?:unknown}).alerts)) {
+      store.contractAlerts = ((contractResult as {alerts:unknown[]}).alerts).filter((a):a is ContractAlert=>{
+        if(!a||typeof a!=='object')return false;
+        const r=a as Record<string,unknown>;
+        return typeof r.id==='string'&&typeof r.reference==='string'&&typeof r.endsOn==='string'&&typeof r.daysUntilExpiry==='number';
+      }).slice(0,200);
+    }
+    if(delegationResult && typeof delegationResult==='object' && Array.isArray((delegationResult as {delegations?:unknown}).delegations)) {
+      store.delegationAlerts = ((delegationResult as {delegations:unknown[]}).delegations).filter((d):d is Delegation=>{
+        if(!d||typeof d!=='object')return false;
+        const r=d as Record<string,unknown>;
+        return typeof r.id==='string'&&typeof r.review_status==='string'&&typeof r.primary_user_id==='string'
+          &&typeof r.delegate_user_id==='string'&&typeof r.created_at==='string';
+      }).slice(0,200);
+    }
     // Migrate existing browser-local read marks to the user's cloud account.
     // Never delete the browser copy when the network fails.
     for (const id of localReadIds(user)) {

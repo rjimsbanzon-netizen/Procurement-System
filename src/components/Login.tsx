@@ -86,7 +86,7 @@ export default function Login({ onSuccess }: LoginProps) {
 
         {isCloudConfigured() ? (
           <p className="demo-credentials">
-            Sign in with an account created by your administrator.
+            Sign in with an account created by Admin.
           </p>
         ) : (
           <div className="demo-credentials">

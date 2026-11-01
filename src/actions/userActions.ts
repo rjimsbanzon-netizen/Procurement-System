@@ -24,7 +24,7 @@ export async function approveUser(userId) {
         }
         u.accessRevoked = false;
         u.status = 'Active';
-        logAudit('User Authorized', `User ${u.name} (@${u.username}) approved by Administrator.`);
+        logAudit('User Authorized', `User ${u.name} (@${u.username}) approved by Admin.`);
         Storage.save(DB);
         showToast('User account approved successfully.', 'success');
         renderApp();
@@ -47,7 +47,7 @@ export async function rejectUser(userId) {
         }
     }
     u.status = 'Rejected';
-    logAudit('User Registration Rejected', `Administrator rejected ${u.name} (@${u.username}).`);
+    logAudit('User Registration Rejected', `Admin rejected ${u.name} (@${u.username}).`);
     Storage.save(DB);
     showToast('User registration rejected.', 'warning');
     renderApp();
@@ -74,7 +74,7 @@ export async function revokeUser(userId) {
     }
     u.accessRevoked = true;
     u.status = 'Access Revoked';
-    logAudit('User Access Revoked', `Administrator revoked access for ${u.name} (@${u.username}).`);
+    logAudit('User Access Revoked', `Admin revoked access for ${u.name} (@${u.username}).`);
     Storage.save(DB);
     showToast('User access revoked and active sessions invalidated.', 'success');
     renderApp();
@@ -94,7 +94,7 @@ export async function deleteUserAccount(userId) {
         }
     }
     DB.users = DB.users.filter(account => account.id !== userId);
-    logAudit('User Account Deleted', `Administrator permanently deleted ${u.name} (@${u.username}).`);
+    logAudit('User Account Deleted', `Admin permanently deleted ${u.name} (@${u.username}).`);
     Storage.save(DB);
     showToast('User account deleted.', 'success');
     renderApp();
@@ -117,7 +117,7 @@ export async function updateUserRole(userId, newRole) {
     const u = DB.users.find(usr => usr.id === userId);
     const permittedRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Supplier'];
     if (DB.currentUser?.role !== 'Admin' || !u || u.role === 'Admin' || !permittedRoles.includes(newRole)) {
-        showToast('Only administrators can assign a supported user role.', 'error');
+        showToast('Only Admin can assign a supported user role.', 'error');
         renderApp();
         return;
     }

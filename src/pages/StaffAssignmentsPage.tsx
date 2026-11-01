@@ -56,7 +56,7 @@ export default function StaffAssignmentsPage(){
   },[admin]);
   useEffect(()=>{void reload()},[reload]);
 
-  if(!admin)return <div className="rounded-lg border bg-white p-5 text-rose-700">Administrator access required.</div>;
+  if(!admin)return <div className="rounded-lg border bg-white p-5 text-rose-700">Admin access required.</div>;
   const assignments=settings?.assignments??[];
   const saved=savedDuty(duty,department);
   const current=assignments.find(a=>a.step_role===saved.role && same(a.department,saved.department));

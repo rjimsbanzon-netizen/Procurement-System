@@ -4,7 +4,7 @@ import { MATRIX_GROUPS, MATRIX_ROLES, normalizeMatrix, fixedValue } from '../dom
 import { renderDashboardView } from './dashboard';
 
 /**
- * Show only administrator-editable capabilities. Account/assignment/workflow
+ * Show only Admin-editable capabilities. Account/assignment/workflow
  * protections stay enforced in normalizeMatrix, permissions.ts, and the API.
  * Ineligible role/action pairs have no interactive control.
  */

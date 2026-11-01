@@ -143,7 +143,7 @@ export function attachAuthEvents() {
                 logAudit('User Registration', `Account creation requested for ${name} (${username}). Role: ${newUser.role}`);
                 Storage.save(DB);
 
-                showToast('Registration submitted! Awaiting administrator approval.', 'success');
+                showToast('Registration submitted! Awaiting Admin approval.', 'success');
                 ui.authMode = 'login';
                 renderApp();
             } else {

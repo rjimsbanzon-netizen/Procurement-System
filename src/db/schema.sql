@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders(status);
 CREATE INDEX IF NOT EXISTS idx_suppliers_status ON suppliers(status);
 
--- Create the first cloud administrator once via POST /auth/bootstrap.
+-- Create the first cloud Admin once via POST /auth/bootstrap.
 
 -- Enterprise workspace snapshot (business records only; no credentials)
 CREATE TABLE IF NOT EXISTS enterprise_state (

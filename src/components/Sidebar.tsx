@@ -18,6 +18,7 @@ const employeeSections: NavSection[] = [
     title: 'Overview',
     items: [
       ['dashboard', 'Dashboard', 'fa-house'],
+      ['global_search', 'Global Search & Filters', 'fa-magnifying-glass'],
       ['tracking', 'Procurement Tracking', 'fa-route'],
       ['notifications', 'Notifications', 'fa-bell']
     ]
@@ -27,6 +28,7 @@ const employeeSections: NavSection[] = [
     items: [
       ['requisitions', 'Purchase Requisitions', 'fa-file-signature'],
       ['approvals', 'Approval Workflow', 'fa-list-check'],
+      ['approval_delegation', 'Approval Delegation', 'fa-user-clock'],
       ['budgets', 'Department Budgets', 'fa-wallet']
     ]
   },
@@ -38,6 +40,7 @@ const employeeSections: NavSection[] = [
       ['bid_comparison', 'Submitted Vendor Bids & Comparison', 'fa-scale-balanced'],
       ['bid_evaluation', 'Supplier Bid Evaluation', 'fa-clipboard-check'],
       ['proposal_meetings', 'Proposal Meetings', 'fa-calendar-days'],
+      ['contracts', 'Contract Management', 'fa-file-contract'],
       ['suppliers', 'Suppliers Directory', 'fa-building'],
       ['supplier_messages', 'Supplier Messaging', 'fa-comments'],
       ['accreditation', 'Supplier Accreditation', 'fa-id-card']
@@ -58,7 +61,8 @@ const employeeSections: NavSection[] = [
     items: [
       ['invoice_matching', 'Invoice & PO Matching', 'fa-file-circle-check'],
       ['payments', 'Payment Management', 'fa-credit-card'],
-      ['reports', 'Advanced Reports', 'fa-chart-column']
+      ['reports', 'Advanced Reports', 'fa-chart-column'],
+      ['supplier_analytics', 'Supplier Performance Analytics', 'fa-chart-line']
     ]
   },
   {
@@ -95,6 +99,8 @@ const supplierSections: NavSection[] = [
       ['proposal_meetings', 'Proposal Meetings', 'fa-calendar-days'],
       ['supplier_messages', 'Supplier Messaging', 'fa-comments'],
       ['accreditation', 'My Accreditation', 'fa-id-card'],
+      ['contracts', 'My Contracts', 'fa-file-contract'],
+      ['supplier_analytics', 'My Performance', 'fa-chart-line'],
       ['documents', 'My Documents', 'fa-folder-open']
     ]
   },

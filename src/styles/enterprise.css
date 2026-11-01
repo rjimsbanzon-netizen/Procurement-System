@@ -422,3 +422,17 @@
             background: rgba(255,255,255,.2);
             box-shadow: none;
         }
+
+/* PWA mobile quick access: does not change the desktop navigation or theme. */
+@media (max-width: 767px) {
+  .enterprise-header { gap:.35rem; padding:.65rem .75rem; }
+  .enterprise-header > div:first-child > span { display:none; }
+  .enterprise-header > div:first-child h1 {font-size:.94rem;max-width:37vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .enterprise-header > div:nth-child(2) {gap:.4rem;}
+  .enterprise-main {padding-bottom:calc(6rem + env(safe-area-inset-bottom,0px));}
+  .pf-mobile-actions {position:fixed;bottom:0;left:0;right:0;z-index:45;background:#fffdfa;border-top:1px solid #ded7ca;display:flex;justify-content:space-around;padding:7px 4px calc(7px + env(safe-area-inset-bottom,0px));box-shadow:0 -3px 18px rgba(34,53,45,.08);}
+  .pf-mobile-actions button {flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:.67rem;min-width:0;color:#647067;padding:4px 2px;border-radius:8px;}
+  .pf-mobile-actions button i {font-size:1.04rem;}
+  .pf-mobile-actions button.pf-mobile-active {color:#a64f32;background:#f7eae1;font-weight:700;}
+  .pf-mobile-actions button:focus-visible {outline:2px solid #a64f32;}
+}

@@ -1,4 +1,9 @@
 import SupplierMessagesPage from './pages/SupplierMessagesPage';
+import SupplierPerformancePage from './pages/SupplierPerformancePage';
+import {MobileQuickActions} from './components/MobileQuickActions';
+import GlobalSearchPage from './pages/GlobalSearchPage';
+import ApprovalDelegationPage from './pages/ApprovalDelegationPage';
+import ContractsPage from './pages/ContractsPage';
 import SupplierAccreditationPage from './pages/SupplierAccreditationPage';
 import NotificationsPage from './features/notifications/NotificationsPage';
 import TrackingPage from './features/tracking/TrackingPage';
@@ -48,6 +53,10 @@ function CurrentPage() {
   }
   switch (ui.currentTab) {
     case 'dashboard': return <DashboardPage />;
+    case 'global_search': return <GlobalSearchPage />;
+    case 'supplier_analytics': return <SupplierPerformancePage />;
+    case 'approval_delegation': return <ApprovalDelegationPage />;
+    case 'contracts': return <ContractsPage />;
     case 'notifications': return <NotificationsPage />;
     case 'tracking': return <TrackingPage />;
     case 'documents': return <DocumentsPage />;
@@ -107,6 +116,7 @@ export default function App() {
           <main className="enterprise-main flex-1 min-h-0 overflow-y-auto p-4 md:p-6 bg-slate-50 custom-scrollbar"><CurrentPage /></main>
         </div>
         <ModalHost />
+        <MobileQuickActions />
       </div>  : <div key={revision}><AuthScreen /></div>}
     <ActionDialogHost />
     <div id="toast-container" className="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none" />

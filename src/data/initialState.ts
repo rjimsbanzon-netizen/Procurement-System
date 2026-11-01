@@ -15,7 +15,7 @@ export const INITIAL_STATE = {
         'Supplier': ['view_assigned_po','view_supplier_portal','submit_bids']
     },
     users: [
-        { id: 'usr-1', username: 'admin', name: 'System Administrator', role: 'Admin', department: 'Executive', status: 'Active', email: 'admin@enterprise.com', password: 'password123', supplierId: null }
+        { id: 'usr-1', username: 'admin', name: 'Admin', role: 'Admin', department: 'Executive', status: 'Active', email: 'admin@enterprise.com', password: 'password123', supplierId: null }
     ],
     stockNeeds: [
         {
@@ -25,7 +25,7 @@ export const INITIAL_STATE = {
             budgetCap: 50000,
             techSpecs: '2U Rack Server, Dual Xeon Silver, 128GB RAM, 4x2TB NVMe SSDs in RAID 10',
             status: 'Published',
-            createdBy: 'System Administrator',
+            createdBy: 'Admin',
             createdAt: '2026-10-24 10:00'
         }
     ],
@@ -141,7 +141,7 @@ export const INITIAL_STATE = {
             status: 'Paid',
             refNumber: 'TRX-998823104',
             remarks: 'Processed via wire transfer. Invoice #GT-8842 attached.',
-            processedBy: 'System Administrator'
+            processedBy: 'Admin'
         }
     ],
     suppliers: [
@@ -164,6 +164,6 @@ export const INITIAL_STATE = {
         }
     ],
     auditLogs: [
-        { id: 'log-1', timestamp: '2026-10-24 10:00', user: 'System Administrator', role: 'Admin', action: 'System Initialization', details: 'Database loaded with enhanced supplier rating & access management.' }
+        { id: 'log-1', timestamp: '2026-10-24 10:00', user: 'Admin', role: 'Admin', action: 'System Initialization', details: 'Database loaded with enhanced supplier rating & access management.' }
     ]
 };

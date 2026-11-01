@@ -79,12 +79,13 @@ export default function BudgetsPage(){
 
   return <section className="max-w-6xl mx-auto space-y-5">
     <div className="rounded-xl bg-white border p-5 flex flex-wrap items-center justify-between gap-4">
-      <div><h2 className="font-bold text-xl">Department Budget Management</h2><p className="text-sm text-slate-500 mt-1">Committed: approved requisitions or unpaid orders. Spent: paid orders. Remaining: allocation minus both.</p></div>
+      <div><h2 className="font-bold text-xl">{admin?'Department Budget Management':'Department Budget Overview'}</h2><p className="text-sm text-slate-500 mt-1">{admin?'All departments · allocation management.':'Read-only financial overview for your authorized department.'} Committed: approved requisitions or unpaid orders. Spent: paid orders. Remaining: allocation minus both.</p></div>
       {admin&&<button type="button" onClick={()=>navigateTo('staff_assignments')} className="rounded-lg border px-4 py-2 text-sm font-semibold text-[#a64f32]">Manage staff assignments</button>}
     </div>
     {error&&<p role="alert" className="p-3 border border-rose-200 bg-rose-50 rounded-lg text-rose-700 text-sm">{error}</p>}
     {note&&<p role="status" className="p-3 border border-emerald-200 bg-emerald-50 rounded-lg text-emerald-700 text-sm">{note}</p>}
 
+    {!admin&&rows.length===0&&!error&&<p className="bg-white border rounded-xl p-5 text-sm text-slate-600">No budget is available for your account. Ask Admin to confirm your Department Head assignment and department allocation.</p>}
     <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
       {rows.map(b=><article key={b.department} className="bg-white border rounded-xl p-5 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-2">

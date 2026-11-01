@@ -39,7 +39,7 @@ export default function Users() {
       <div className="page">
         <header className="page-header">
           <h1>Users</h1>
-          <p className="text-muted">Only administrators can manage accounts.</p>
+          <p className="text-muted">Only Admin can manage accounts.</p>
         </header>
       </div>
     );

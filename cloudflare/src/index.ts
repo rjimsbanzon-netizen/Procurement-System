@@ -8,6 +8,10 @@ import { handleNotificationRoutes } from './notificationRoutes';
 import { handleFinanceRoutes, validateFinanceSnapshotWrite } from './financeRoutes';
 import { handleSourcingRoutes, validateSourcingSnapshotWrite } from './sourcingRoutes';
 import { handleOperationsRoutes } from './operationsRoutes';
+import { handleDelegationRoutes } from './delegationRoutes';
+import { handleContractRoutes } from './contractRoutes';
+import { handlePerformanceRoutes } from './performanceRoutes';
+import { handleAuditEvidenceRoutes, evidenceStatement, snapshotEvidence } from './auditEvidenceRoutes';
 
 export interface Env {
   DB: D1Database;
@@ -356,7 +360,7 @@ export default {
           email?: unknown;
         };
         if (!env.BOOTSTRAP_SECRET) {
-          return json({ error: 'Administrator bootstrap is not configured' }, 503, cors);
+          return json({ error: 'Admin bootstrap is not configured' }, 503, cors);
         }
         if (
           typeof body.setupSecret !== 'string' ||
@@ -403,6 +407,15 @@ export default {
       if (notificationResponse) return notificationResponse;
 
       // Additive D1 finance workflows. Keep all existing auth, documents and notification routes.
+      const delegationResponse = await handleDelegationRoutes(request, env, user, cors);
+      if (delegationResponse) return delegationResponse;
+      const contractResponse = await handleContractRoutes(request, env, user, cors);
+      if (contractResponse) return contractResponse;
+      const performanceResponse = await handlePerformanceRoutes(request, env, user, cors);
+      if (performanceResponse) return performanceResponse;
+      const evidenceResponse = await handleAuditEvidenceRoutes(request, env, user, cors);
+      if (evidenceResponse) return evidenceResponse;
+
       const financeResponse = await handleFinanceRoutes(request, env, user, cors);
       if (financeResponse) return financeResponse;
 
@@ -441,7 +454,7 @@ export default {
       }
 
       if (pathname === '/access-control' && request.method === 'PUT') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const body = (await request.json()) as { permissions?: unknown };
         if (!body.permissions || typeof body.permissions !== 'object' || Array.isArray(body.permissions)) {
           return json({ error: 'Role permissions are required.' }, 400, cors);
@@ -471,11 +484,14 @@ export default {
             } else if (index !== -1) actions.splice(index, 1);
           }
         }
-        await env.DB.prepare(
-          `INSERT INTO access_control_settings (id, data, updated_at)
-           VALUES (1, ?, datetime('now'))
-           ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`
-        ).bind(JSON.stringify(normalized)).run();
+        const previousPermissions = await env.DB.prepare('SELECT data FROM access_control_settings WHERE id=1').first<{data:string}>();
+        await env.DB.batch([
+          env.DB.prepare(`INSERT INTO access_control_settings (id, data, updated_at)
+            VALUES (1, ?, datetime('now'))
+            ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')`)
+            .bind(JSON.stringify(normalized)),
+          evidenceStatement(env,user,'access_control','roles','Updated',previousPermissions ? JSON.parse(previousPermissions.data) : null,normalized)
+        ]);
         return json({ ok: true, permissions: normalized }, 200, cors);
       }
 
@@ -507,12 +523,18 @@ export default {
         if (sourcingError) return json({ error: sourcingError }, 409, cors);
         const data = JSON.stringify(input);
         if (data.length > 1000000) return json({ error: 'Dataset too large' }, 413, cors);
-        await env.DB.prepare("INSERT INTO enterprise_state (id, data, updated_at) VALUES (1, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')").bind(data).run();
+        const previousState = current ? JSON.parse(current.data) as Record<string,unknown> : {};
+        // Atomic snapshot + server-generated before/after evidence. Client auditLogs are not authoritative.
+        const auditEntries = snapshotEvidence(env,user,previousState,input);
+        await env.DB.batch([
+          env.DB.prepare("INSERT INTO enterprise_state (id, data, updated_at) VALUES (1, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')").bind(data),
+          ...auditEntries
+        ]);
         return json({ ok: true }, 200, cors);
       }
 
       if (pathname === '/users' && request.method === 'GET') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const { results } = await env.DB.prepare(
           `SELECT id, username, name, email, role, app_role, status,
                   department, company_name, access_revoked FROM users ORDER BY username`
@@ -522,7 +544,7 @@ export default {
 
       const userMatch = pathname.match(/^\/users\/([^/]+)$/);
       if (userMatch && request.method === 'PUT') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const body = (await request.json()) as { status?: unknown; appRole?: unknown; accessRevoked?: unknown };
         const validRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Supplier'];
         if ((body.status !== 'pending' && body.status !== 'approved' && body.status !== 'rejected') ||
@@ -538,20 +560,25 @@ export default {
         }
         const appRole = body.appRole as string | undefined;
         const role: Role = appRole === 'Supplier' ? 'guest' : 'employee';
-        await env.DB.prepare(
-          `UPDATE users SET status = ?, app_role = COALESCE(?, app_role),
-             role = CASE WHEN ? IS NULL THEN role ELSE ? END,
-             access_revoked = COALESCE(?, access_revoked), updated_at = ? WHERE id = ?`
-        ).bind(body.status, appRole ?? null, appRole ?? null, role,
-          body.accessRevoked === undefined ? null : body.accessRevoked ? 1 : 0,
-          new Date().toISOString(), id).run();
+        const previousUser = await env.DB.prepare('SELECT id, status, app_role, role, access_revoked FROM users WHERE id=?').bind(id).first();
+        const now = new Date().toISOString();
+        await env.DB.batch([
+          env.DB.prepare(`UPDATE users SET status = ?, app_role = COALESCE(?, app_role),
+            role = CASE WHEN ? IS NULL THEN role ELSE ? END,
+            access_revoked = COALESCE(?, access_revoked), updated_at = ? WHERE id = ?`)
+            .bind(body.status, appRole ?? null, appRole ?? null, role,
+              body.accessRevoked === undefined ? null : body.accessRevoked ? 1 : 0, now, id),
+          evidenceStatement(env,user,'users',id,'Account updated',previousUser,{
+            status:body.status, appRole:appRole ?? null,accessRevoked:body.accessRevoked ?? null
+          })
+        ]);
         if (body.accessRevoked === true || body.status !== 'approved') {
           await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
         }
         return json({ ok: true, id, status: body.status, appRole, accessRevoked: body.accessRevoked }, 200, cors);
       }
       if (userMatch && request.method === 'DELETE') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const id = decodeURIComponent(userMatch[1]);
         const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?')
           .bind(id).first<{ role: Role }>();
@@ -574,7 +601,7 @@ export default {
       }
 
       if (pathname === '/suppliers' && request.method === 'POST') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const s = (await request.json()) as {
           id?: unknown;
           name?: unknown;
@@ -611,7 +638,7 @@ export default {
       }
 
       if (pathname.startsWith('/suppliers/') && request.method === 'DELETE') {
-        if (!isAdmin(user)) return json({ error: 'Administrator access required' }, 403, cors);
+        if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const id = decodeURIComponent(pathname.slice('/suppliers/'.length));
         if (!id) return json({ error: 'Supplier ID required' }, 400, cors);
         await env.DB.prepare('DELETE FROM suppliers WHERE id = ?').bind(id).run();
@@ -659,7 +686,7 @@ export default {
           .bind(o.id)
           .first();
         if (existing && !isAdmin(user)) {
-          return json({ error: 'Only administrators can update purchase orders' }, 403, cors);
+          return json({ error: 'Only Admin can update purchase orders' }, 403, cors);
         }
         if (!existing && !isAdmin(user) && o.status !== 'pending') {
           return json({ error: 'New purchase orders must be pending' }, 403, cors);
