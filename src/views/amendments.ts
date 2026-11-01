@@ -45,7 +45,7 @@ export function renderAmendmentsView() {
                                     <td class="p-4 text-xs font-medium text-slate-800">${a.reason}</td>
                                     <td class="p-4 text-xs">
                                         <div class="font-semibold text-slate-800">${a.revisedSpecs}</div>
-                                        <div class="text-slate-500">Revised Qty: ${a.revisedQty}</div>
+                                        <div class="text-slate-500">Revised Qty: ${a.revisedQty} ${DB.orders.find(o=>o.id===a.poId)?.unit || 'units'}</div>
                                     </td>
                                     <td class="p-4 text-xs text-slate-600">${a.supplierResponse || 'Awaiting supplier explanation'}</td>
                                     <td class="p-4">

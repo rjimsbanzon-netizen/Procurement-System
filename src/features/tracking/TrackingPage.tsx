@@ -46,7 +46,7 @@ export default function TrackingPage() {
             <div><p className="text-xs tracking-widest text-slate-500 font-bold uppercase">Tracking reference</p>
               <h3 className="text-2xl font-bold text-slate-900 mt-1">{journey.pr.id}</h3>
               <p className="text-sm text-slate-700 mt-1">{journey.pr.itemTitle}</p>
-              <p className="text-xs text-slate-500 mt-1">{journey.pr.department} · {Number(journey.pr.quantity)} units · {peso(journey.pr.totalCost)}</p>
+              <p className="text-xs text-slate-500 mt-1">{journey.pr.department} · {Number(journey.pr.quantity)} {journey.pr.unit || 'units'} · {peso(journey.pr.totalCost)}</p>
             </div>
             <span className="rounded-md px-3 py-1.5 text-xs font-bold bg-[#eee7d9] text-[#873e27]">{journey.pr.status}</span>
           </div>

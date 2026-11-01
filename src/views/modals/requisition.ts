@@ -1,3 +1,4 @@
+import { measurementUnitOptionsHtml } from '../../domain/measurementUnits';
 // @ts-nocheck
 import { closeModal } from '../../actions/modalActions';
 
@@ -22,10 +23,17 @@ export function renderCreatePRModal() {
                         <textarea id="pr-specs" rows="3" required placeholder="Detailed dimensions, specifications, brand..." class="w-full text-xs p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500"></textarea>
                     </div>
 
-                    <div class="grid grid-cols-3 gap-3">
+                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
                         <div>
-                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Quantity</label>
-                            <input type="number" id="pr-qty" min="1" value="1" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
+                            <label for="pr-qty" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Quantity</label>
+                            <input type="number" id="pr-qty" min="1" step="1" value="1" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
+                        </div>
+                        <div>
+                            <label for="pr-unit" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Unit of Measurement</label>
+                            <input id="pr-unit-search" type="search" autocomplete="off" placeholder="Search unit or type…" aria-label="Search units of measurement" class="mb-1.5 w-full text-sm p-2.5 border border-slate-300 rounded-lg" />
+                            <select id="pr-unit" required aria-label="Select unit of measurement" class="w-full text-sm p-2.5 border border-slate-300 rounded-lg">
+                                ${measurementUnitOptionsHtml()}
+                            </select>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Est. Unit Price (₱ PHP)</label>

@@ -592,7 +592,7 @@ export default {
         if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const { results } = await env.DB.prepare(
           `SELECT id, username, name, email, role, app_role, status,
-                  department, company_name, access_revoked, requested_position, username_aliases, name_aliases FROM users ORDER BY username`
+                  department, company_name, access_revoked, requested_position, username_aliases, name_aliases FROM users WHERE deleted_at IS NULL ORDER BY username`
         ).all();
         return json(results ?? [], 200, cors);
       }
@@ -601,14 +601,14 @@ export default {
       if (userMatch && request.method === 'PUT') {
         if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const body = (await request.json()) as { status?: unknown; appRole?: unknown; accessRevoked?: unknown };
-        const validRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Supplier'];
+        const validRoles = ['Employee', 'Procurement Officer', 'Procurement Head', 'Operations Officer', 'Supplier'];
         if ((body.status !== 'pending' && body.status !== 'approved' && body.status !== 'rejected') ||
             (body.accessRevoked !== undefined && typeof body.accessRevoked !== 'boolean') ||
             (body.appRole !== undefined && (typeof body.appRole !== 'string' || !validRoles.includes(body.appRole)))) {
           return json({ error: 'Invalid account status or role' }, 400, cors);
         }
         const id = decodeURIComponent(userMatch[1]);
-        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?')
+        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ? AND deleted_at IS NULL')
           .bind(id).first<{ role: Role }>();
         if (!target || target.role === 'admin' || id === user.id) {
           return json({ error: 'Account cannot be modified' }, 404, cors);
@@ -635,16 +635,29 @@ export default {
       if (userMatch && request.method === 'DELETE') {
         if (!isAdmin(user)) return json({ error: 'Admin access required' }, 403, cors);
         const id = decodeURIComponent(userMatch[1]);
-        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?')
+        const target = await env.DB.prepare('SELECT role FROM users WHERE id = ? AND deleted_at IS NULL')
           .bind(id).first<{ role: Role }>();
         if (!target || target.role === 'admin' || id === user.id) {
           return json({ error: 'Account cannot be deleted' }, 404, cors);
         }
-        await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id).run();
-        const result = await env.DB.prepare("DELETE FROM users WHERE id = ? AND role != 'admin'")
-          .bind(id).run();
-        if (result.meta.changes !== 1) return json({ error: 'Account could not be deleted' }, 409, cors);
-        return json({ ok: true, id }, 200, cors);
+        // Soft-retirement avoids foreign-key errors on approved accounts with
+        // invoices, approval decisions, messages, and procurement records.
+        // Historical rows continue referencing the original user ID.
+        const now = new Date().toISOString();
+        const previous = await env.DB.prepare('SELECT id,username,name,app_role,status,access_revoked FROM users WHERE id=?')
+          .bind(id).first();
+        const results = await env.DB.batch([
+          env.DB.prepare("UPDATE users SET status='rejected',access_revoked=1,deleted_at=?,updated_at=? WHERE id=? AND role!='admin' AND deleted_at IS NULL")
+            .bind(now,now,id),
+          env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),
+          env.DB.prepare('DELETE FROM finance_approvers WHERE user_id=?').bind(id),
+          env.DB.prepare("UPDATE approval_delegations SET revoked_at=?,revoked_by=? WHERE revoked_at IS NULL AND (primary_user_id=? OR delegate_user_id=?)")
+            .bind(now,user.id,id,id),
+          evidenceStatement(env,user,'users',id,'Account removed (historical records retained)',previous,
+            {status:'rejected',access_revoked:1,deleted_at:now})
+        ]);
+        if (results[0].meta.changes !== 1) return json({ error: 'Account changed. Refresh and retry.' }, 409, cors);
+        return json({ ok: true, id, archived: true }, 200, cors);
       }
 
       if (pathname === '/suppliers' && request.method === 'GET') {

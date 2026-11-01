@@ -27,7 +27,7 @@ export function renderSubmitBidModal() {
               Claims will still be checked against the official quotation and product evidence before supplier selection.
             </div>
             <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-700">
-              <p><strong>Required quantity:</strong> ${Number(need.targetQty).toLocaleString('en-PH')} unit(s)</p>
+              <p><strong>Required quantity:</strong> ${Number(need.targetQty).toLocaleString('en-PH')} ${need.unit || 'units'}</p>
               <p><strong>Maximum budget:</strong> ₱${Number(need.budgetCap || 0).toLocaleString('en-PH')}</p>
               <p><strong>Required specifications:</strong> ${escapeHtml(need.techSpecs)}</p>
             </div>

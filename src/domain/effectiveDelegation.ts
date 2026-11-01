@@ -4,7 +4,7 @@
  */
 import { DB } from '../store/state';
 
-export type ActingResponsibility = 'Procurement Head' | 'Finance Officer' | 'Finance Head' | 'Department Head';
+export type ActingResponsibility = 'Procurement Head' | 'Operations Head' | 'Finance Officer' | 'Finance Head' | 'Department Head';
 type ActiveEntry = {
   role: ActingResponsibility;
   department: string;

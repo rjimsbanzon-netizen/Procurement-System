@@ -28,6 +28,7 @@ export default function InvoiceMatchingPage() {
   const me = DB.currentUser;
   const isSupplier = me?.role === 'Supplier';
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [invoiceListAccessible, setInvoiceListAccessible] = useState(false);
   const [settings, setSettings] = useState<FinanceSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -61,14 +62,9 @@ export default function InvoiceMatchingPage() {
   const poSigned = Boolean(po && ['Approved & Signed', 'Issued'].includes(po.status));
   const amountMatches = Boolean(po && amount.trim() && Number.isFinite(Number(amount)) &&
     cents(Number(amount)) === cents(Number(po.totalCost)));
-  // The Worker calculates effective Finance Officer authority, including
-  // time-bound approved delegation (e.g. Jason covering Juan's leave).
-  // Keep the direct-assignment fallback only for an older Worker deployment.
-  // The POST /finance/invoices/:id/match route still enforces permission itself.
-  const canVerify = !isSupplier && Boolean(settings?.invoiceVerification
-    ? settings.invoiceVerification.allowed
-    : settings?.assignments.some(assignment =>
-      assignment.step_role === 'Finance Officer' && assignment.user_id === me?.id));
+  // The Worker's D1-validated effective access is authoritative. A local
+  // role or appointment label alone is not sufficient for a sign-off.
+  const canVerify = !isSupplier && settings?.invoiceVerification?.allowed === true;
   const actingFinance = canVerify && Boolean(settings?.invoiceVerification?.acting);
   const canSubmit = isSupplier;
   const reviewInvoice = invoices.find(invoice => invoice.id === selectedReview) ?? null;
@@ -76,16 +72,26 @@ export default function InvoiceMatchingPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      // Supplier accounts cannot access /finance/settings; fetching it previously blocked their invoice list.
-      const [list, config] = await Promise.all([
+      // Load these independently. Even if invoice access is denied, the user
+      // still needs the server's explanation of their current delegation.
+      const [list, config] = await Promise.allSettled([
         financeAPI.invoices(),
         isSupplier ? Promise.resolve(null) : financeAPI.settings(),
       ]);
-      setInvoices(list.invoices || []);
-      setSettings(config);
-      setError('');
-    } catch (err) {
-      setError(`Could not load invoices: ${errorMessage(err)}`);
+      if (config.status === 'fulfilled') setSettings(config.value);
+      else setSettings(null);
+      if (list.status === 'fulfilled') {
+        setInvoices(list.value.invoices || []);
+        setInvoiceListAccessible(true);
+      } else {
+        setInvoices([]);
+        setInvoiceListAccessible(false);
+      }
+      const issues = [
+        list.status === 'rejected' ? `Invoice list unavailable: ${errorMessage(list.reason)}` : '',
+        config.status === 'rejected' ? `Finance permissions unavailable: ${errorMessage(config.reason)}` : '',
+      ].filter(Boolean);
+      setError(issues.join(' '));
     } finally {
       setLoading(false);
     }
@@ -212,14 +218,14 @@ export default function InvoiceMatchingPage() {
     {!isSupplier && !loading && <div className="rounded-lg bg-sky-50 border border-sky-200 p-3 text-sm text-sky-900">
       {canVerify ? <><strong>{actingFinance ? 'Acting Finance Officer:' : 'Assigned Finance Reviewer:'}</strong> Inspect the supplier's file and three-way checks before confirming a match.
         {actingFinance && settings?.invoiceVerification?.validUntil && <> Your delegation is valid through <strong>{settings.invoiceVerification.validUntil}</strong> (Philippine time).</>}</>
-        : <><strong>Staff / Admin oversight:</strong> You can review submitted invoices and discrepancies, but only the assigned or currently delegated Finance Officer can verify the match. Admin can manage the Finance Officer appointment in Staff Assignments and temporary coverage in Approval Delegation.</>}
+        : <><strong>Finance verification not assigned:</strong> {settings?.invoiceVerification?.reason || 'The Worker has not confirmed an active Finance Officer assignment or delegation. Refresh after deploying the latest Worker.'} Admin can review appointments in Staff Assignments and temporary coverage in Approval Delegation.</>}
     </div>}
     {!CLOUD_API_BASE && <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">Invoices and matching require an active Cloudflare Worker connection.</div>}
     {error && <div role="alert" className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-sm text-rose-800">{error}</div>}
     {message && <div role="status" className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">{message}</div>}
 
     <section aria-label="Invoice matching summary" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      {[{label:'Total invoices',value:invoices.length,icon:'fa-file-invoice-dollar'},{label:'Awaiting verification',value:awaiting,icon:'fa-clock'},{label:'Successfully matched',value:matched,icon:'fa-circle-check'}].map(metric=><div key={metric.label} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div><p className="text-xs font-bold uppercase text-slate-500">{metric.label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{loading?'…':metric.value}</p></div><i aria-hidden="true" className={`fa-solid ${metric.icon} text-xl text-[#a64f32]`} /></div>)}
+      {[{label:'Total invoices',value:invoices.length,icon:'fa-file-invoice-dollar'},{label:'Awaiting verification',value:awaiting,icon:'fa-clock'},{label:'Successfully matched',value:matched,icon:'fa-circle-check'}].map(metric=><div key={metric.label} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div><p className="text-xs font-bold uppercase text-slate-500">{metric.label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{loading?'…':!invoiceListAccessible?'—':metric.value}</p></div><i aria-hidden="true" className={`fa-solid ${metric.icon} text-xl text-[#a64f32]`} /></div>)}
     </section>
     <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,1fr)] gap-4 items-start">
       {isSupplier ? <form className="bg-white border border-slate-200 rounded-xl p-5 space-y-4" onSubmit={e => void submitInvoice(e)}>
@@ -235,7 +241,7 @@ export default function InvoiceMatchingPage() {
         {po && <div className="grid sm:grid-cols-2 gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600">
           <div><span className="text-slate-500">Supplier</span><p className="font-semibold text-slate-800 mt-1">{po.supplierName}</p></div>
           <div><span className="text-slate-500">PO value</span><p className="font-bold text-slate-800 mt-1">{money(Number(po.totalCost || 0))}</p></div>
-          <div><span className="text-slate-500">Items / quantity</span><p className="font-semibold text-slate-800 mt-1">{po.itemTitle || 'Purchase order'} · {po.quantity} units</p></div>
+          <div><span className="text-slate-500">Items / quantity</span><p className="font-semibold text-slate-800 mt-1">{po.itemTitle || 'Purchase order'} · {po.quantity} {po.unit || 'units'}</p></div>
           <div><span className="text-slate-500">PO status</span><p className="font-semibold text-slate-800 mt-1">{po.status}</p></div>
         </div>}
         <div className="grid sm:grid-cols-2 gap-3">
@@ -291,7 +297,7 @@ export default function InvoiceMatchingPage() {
           <p className="text-xs text-slate-500 mt-1">The system compares PO status, delivery inspection, invoiced amount and attached evidence. Passing these checks does not count as Finance approval.</p></div>
         {!po ? <p className="bg-slate-50 rounded-lg p-4 text-sm text-slate-500">{isSupplier ? 'Select a Purchase Order to see what still needs verification.' : 'Choose Review checks for an invoice to inspect its Purchase Order.'}</p> : <>
           <Check status={poSigned ? 'pass' : 'wait'}>{poSigned ? 'Purchase Order accepted / issued.' : 'Waiting for the supplier to accept the Purchase Order.'}</Check>
-          <Check status={deliveryVerified ? 'pass' : 'wait'}>{deliveryVerified ? `All ${quantity} items received and inspected.` : `Delivery: ${deliveredQty}/${quantity} recorded. All deliveries must pass inspection.`}</Check>
+          <Check status={deliveryVerified ? 'pass' : 'wait'}>{deliveryVerified ? `All ${quantity} ${po?.unit || 'units'} received and inspected.` : `Delivery: ${deliveredQty}/${quantity} ${po?.unit || 'units'} recorded. All deliveries must pass inspection.`}</Check>
           <Check status={!amount.trim() ? 'wait' : amountMatches ? 'pass' : 'fail'}>{!amount.trim() ? 'Enter the invoice total to compare with the PO.' : amountMatches ? 'Invoice amount equals PO total.' : `Invoice amount differs from ${money(Number(po.totalCost || 0))}.`}</Check>
           <Check status={file || documentId ? 'pass' : 'wait'}>{file ? `New file selected: ${file.name}` : documentId ? 'An invoice document is selected.' : 'An invoice file is required.'}</Check>
           <div className="bg-sky-50 border border-sky-100 text-sky-900 rounded-lg p-3 text-xs">
@@ -339,7 +345,8 @@ export default function InvoiceMatchingPage() {
             {invoice.status === 'Matched' && !isValidMatch(invoice) && <p className="text-xs text-rose-700 mt-2">Previously matched, but the required PO / receipt is now missing. Payment is blocked.</p>}
             {me?.role === 'Admin' && invoice.reasons.includes('Purchase Order is missing.') && <RestoreMissingRecord kind='PO' recordId={invoice.poId} onRestored={refresh}/>}</td>
           </tr>)}
-          {!loading && displayed.length === 0 && <tr><td colSpan={6} className="p-0"><EmptyState title={invoices.length ? 'No invoices match the filter' : 'No supplier invoices yet'} icon="fa-file-invoice" description={invoices.length ? 'Change your search or status filter to find invoices.' : 'Supplier invoices will appear after upload for matching against a signed PO and verified delivery.'} /></td></tr>}
+          {!loading && !invoiceListAccessible && <tr><td colSpan={6} className="p-4 text-sm text-amber-800 bg-amber-50">Invoice records are unavailable to this account right now. See the access explanation above or ask Admin to review the current Finance Officer assignment and delegation. The system has not confirmed that the invoice register is empty.</td></tr>}
+          {!loading && invoiceListAccessible && displayed.length === 0 && <tr><td colSpan={6} className="p-0"><EmptyState title={invoices.length ? 'No invoices match the filter' : 'No supplier invoices yet'} icon="fa-file-invoice" description={invoices.length ? 'Change your search or status filter to find invoices.' : 'Supplier invoices will appear after upload for matching against a signed PO and verified delivery.'} /></td></tr>}
           {loading && <tr><td colSpan={6} className="p-0"><LoadingState title="Loading supplier invoices" description="Retrieving the latest cloud invoices and matching statuses…" /></td></tr>}
         </tbody>
       </table></div>

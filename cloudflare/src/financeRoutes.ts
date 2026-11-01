@@ -411,6 +411,35 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     return reply({ok:true,userId,appRole:nextRole},200,cors);
   }
 
+  // Operations Officer appointments are operational, not Finance sign-off roles.
+  if(path==='/finance/staff/operations-officer'&&method==='PUT'){
+    if(!admin)return reply({error:'Admin only.'},403,cors);
+    const body=await request.json().catch(()=>null) as Row|null;
+    const userId=typeof body?.userId==='string'?body.userId.trim():'';
+    const action=body?.action;
+    if(!userId||!['appoint','remove'].includes(action)||userId===user.id)
+      return reply({error:'Choose an Operations employee and a valid action.'},400,cors);
+    const target=await env.DB.prepare('SELECT id,name,role,app_role,department,status,access_revoked FROM users WHERE id=?')
+      .bind(userId).first<Row>();
+    if(!target||target.role!=='employee'||target.status!=='approved'||target.access_revoked||!same(target.department,'Operations'))
+      return reply({error:'Select an approved Operations employee.'},403,cors);
+    const appoint=action==='appoint';
+    const from=appoint?'Employee':'Operations Officer',to=appoint?'Operations Officer':'Employee';
+    if(target.app_role!==from)return reply({error:'The account role has changed. Refresh Staff Assignments.'},409,cors);
+    if(appoint){
+      const busy=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE user_id=? LIMIT 1').bind(userId).first();
+      if(busy)return reply({error:'Remove the current Head/Finance appointment before appointing an Operations Officer.'},409,cors);
+    }
+    const changes=await env.DB.batch([
+      env.DB.prepare("UPDATE users SET app_role=?,updated_at=datetime('now') WHERE id=? AND app_role=? AND status='approved' AND access_revoked=0")
+        .bind(to,userId,from),
+      evidenceStatement(env,user,'users',userId,appoint?'Operations Officer appointed':'Operations Officer removed',
+        {name:target.name,app_role:from},{name:target.name,app_role:to})
+    ]);
+    if(changes[0]?.meta.changes!==1)return reply({error:'Account changed; refresh first.'},409,cors);
+    return reply({ok:true,userId,appRole:to},200,cors);
+  }
+
   // Only Admin may correct the saved home department of an
   // existing Procurement Head account. This never changes historical PRs.
   if(path==='/finance/staff/procurement-department'&&method==='PUT') {
@@ -472,6 +501,8 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     if(!inputDepartment)return reply({error:'Department required.'},400,cors);
     const department=body.role==='Finance Officer'?'*':await knownDepartment(env,inputDepartment);
     if(!department)return reply({error:'Choose a registered department in Staff Assignments.'},400,cors);
+    if(body.role==='Department Head' && same(department,'Executive'))
+      return reply({error:'Executive cannot be assigned a Department Head through Staff Assignments.'},400,cors);
     const target=await env.DB.prepare('SELECT id,role,app_role,department,status,access_revoked FROM users WHERE id=?').bind(body.userId).first<Row>();
     const isProcurementHead=body.role==='Department Head'&&same(department,'Procurement');
     // Existing sites may contain legacy explicit Finance Officer/Head account
@@ -536,18 +567,23 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     const {data}=await snapshot(env);
     const pr=data.requisitions.find(r=>r.id===body.prId);
     if(!pr||pr.status!=='Pending')return reply({error:'Only a pending PR can enter the workflow.'},409,cors);
-    // Department Head is the submitting authority, NOT an approval step.
-    // An Admin can submit legacy/unassigned PRs so records are not stranded.
-    const departmentHead=await env.DB.prepare(
+    // Executive has no Department Head appointment by design. An authenticated
+    // Admin submits Executive PRs directly; all other departments retain their
+    // appointed Head / authorized substitute submission requirement.
+    const executiveSubmission=same(pr.department,'Executive');
+    if(executiveSubmission && !admin)
+      return reply({error:'Executive requisitions must be submitted by Admin.'},403,cors);
+    const departmentHead=executiveSubmission?null:await env.DB.prepare(
       "SELECT user_id FROM finance_approvers WHERE step_role='Department Head' AND department=?"
     ).bind(pr.department).first<{user_id:string}>();
-    if(!departmentHead) {
+    if(!executiveSubmission && !departmentHead)
       return reply({error:`Assign a Department Head for ${pr.department} under Staff Assignments before submitting this requisition.`},409,cors);
-    }
-    const delegatedDepartmentHead=!admin && await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Department Head',pr.department);
-    if(!admin && !((departmentHead.user_id===user.id && same(user.department,pr.department)) || delegatedDepartmentHead)) {
+    const delegatedDepartmentHead=!admin && !executiveSubmission && (await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Department Head',pr.department) || (same(pr.department,'Operations') && await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Operations Head')));
+    if(!admin && !executiveSubmission && !((departmentHead?.user_id===user.id && same(user.department,pr.department)) || delegatedDepartmentHead))
       return reply({error:`Only the assigned Department Head for ${pr.department}, Admin, or an approved substitute for that department may submit this requisition.`},403,cors);
-    }
+    // The actual submitting Admin is the Executive requester, so the existing
+    // no-self-approval rule remains enforceable at every subsequent step.
+    const submittingUserId=executiveSubmission?user.id:admin?departmentHead!.user_id:user.id;
     const cents=toCents(pr.totalCost);
     if(!Number.isSafeInteger(cents))return reply({error:'Invalid PR amount.'},400,cors);
     const rules=await approverSettings(env);
@@ -559,7 +595,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
           WHERE a.step_role='Finance Officer' AND a.department='*'`).first<Row>();
       if(!activeFinanceEmployee(head,'Finance Head')||!activeFinanceEmployee(officer,'Finance Officer')||head?.user_id===officer?.user_id)
         return reply({error:'High-value PR requires a distinct eligible Finance Officer and Finance Head. Configure both in Staff Assignments.'},409,cors);
-      if(head?.user_id===departmentHead.user_id)
+      if(head?.user_id===submittingUserId)
         return reply({error:'Finance Head cannot authorize a PR they submitted. Assign an independent Finance Head or change the requester.'},409,cors);
     }
     // Step 1 is an audit-only SUBMISSION marker. Approval starts at step 2.
@@ -568,11 +604,17 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     if(cents>=toCents(rules.financeFrom))steps.push('Finance Officer');
     if(requiresHead || cents>=toCents(rules.adminFrom))steps.push('Admin');
     const now=new Date().toISOString();
+    const submissionNote=executiveSubmission
+      ?'Executive requisition submitted directly by Admin; there is no Executive Department Head. This is a submission, not an approval.'
+      :delegatedDepartmentHead
+        ?'Request submitted by authorized Department Head substitute; this is not an approval.'
+        :admin?'Request submitted on behalf of the assigned Department Head by Admin; this is not an approval.'
+          :'Request submitted by Department Head; this is not an approval.';
     try {
       await env.DB.batch([
-        env.DB.prepare('INSERT INTO pr_approval_requests(pr_id,department,amount_cents,current_step,total_steps,requested_by,created_at) VALUES(?,?,?,2,?,?,?)').bind(pr.id,pr.department,cents,steps.length,admin?departmentHead.user_id:user.id,now),
+        env.DB.prepare('INSERT INTO pr_approval_requests(pr_id,department,amount_cents,current_step,total_steps,requested_by,created_at) VALUES(?,?,?,2,?,?,?)').bind(pr.id,pr.department,cents,steps.length,submittingUserId,now),
         env.DB.prepare("INSERT INTO pr_approval_steps(pr_id,step_no,step_role,status,comment,decided_at) VALUES(?,1,'Department Head','Approved',?,?)")
-          .bind(pr.id,delegatedDepartmentHead?'Request submitted by authorized Department Head substitute; this is not an approval.':'Request submitted by Department Head; this is not an approval.',now),
+          .bind(pr.id,submissionNote,now),
         ...steps.slice(1).map((role,i)=>env.DB.prepare('INSERT INTO pr_approval_steps(pr_id,step_no,step_role) VALUES(?,?,?)').bind(pr.id,i+2,role)),
         ...(requiresHead?[env.DB.prepare("INSERT INTO finance_head_signoffs(pr_id,status) VALUES(?,'Pending')").bind(pr.id)]:[])
       ]);

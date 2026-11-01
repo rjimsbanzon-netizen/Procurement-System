@@ -69,13 +69,19 @@ export function getEffectivePosition(user: StaffAccount, assignments: readonly S
     return position('Assignment conflict', user.department || '', 'Finance Head and Finance Officer require separate active accounts.', 'conflict');
   if (heads.length && isFinanceDepartment(user.department))
     return position('Finance Head', heads[0].department, 'Head of Finance & Accounting · high-value financial authorization', 'assignment');
+  if (heads.length && same(user.department, 'Human Resources'))
+    return position('Human Resources Head', 'Human Resources', 'Appointed Head of Human Resources · department requisition submission', 'assignment');
+  if (heads.length && same(user.department, 'Operations'))
+    return position('Operations Head', 'Operations', 'Appointed Head of Operations · department PR submission', 'assignment');
   if (heads.length)
     return position('Head', heads[0].department, 'Department Head requester · cannot approve own requisition', 'assignment');
   if (finance.length && isFinanceDepartment(user.department))
     return position('Finance Officer', user.department || '', 'Assigned Finance reviewer · routine financial approval and payment processing', 'assignment');
 
+  if (user.role === 'Operations Officer')
+    return position('Operations Officer', 'Operations', 'Operations department officer; can cover Head when delegated', 'account');
   if (user.role === 'Procurement Officer')
-    return position('Employee', 'Procurement', 'Procurement Officer / Delivery Staff · Procurement department', 'account');
+    return position('Procurement Officer', 'Procurement', 'Procurement officer · sourcing and delivery responsibilities', 'account');
 
   return position('Employee', user.department || '', 'Regular department employee', 'account');
 }

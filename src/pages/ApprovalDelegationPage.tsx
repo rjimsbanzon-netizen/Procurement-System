@@ -7,8 +7,10 @@ import {navigateTo} from '../core/renderBridge';
 
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 const finance=(s:string)=>['finance & accounting','finance and accounting','finance'].includes(s.toLowerCase().trim());
+const hr=(s:string)=>['human resources','human resource','hr'].includes(s.toLowerCase().trim());
+const roleLabel=(role:DelegationRole,department:string)=>role==='Operations Head'?'Operations Head → Operations Officer':role==='Department Head'&&hr(department)?'Human Resources Head':role==='Department Head'?`${department} · Department Head`:role;
 function description(role:DelegationRole){
- return role==='Procurement Head'?'Eligible substitute: active Procurement Officer.':role==='Department Head'?'Eligible substitute: active Employee from the same department. Their authority covers PR submission only.':'Eligible substitute: active Finance & Accounting Employee with no conflicting Finance approval assignment.';
+ return role==='Operations Head'?'Eligible substitute: appointed Operations Officer. Their coverage is limited to Operations PR submission.':role==='Procurement Head'?'Eligible substitute: active Procurement Officer.':role==='Department Head'?'Eligible substitute: active Employee from the same department (including Human Resources). Their authority covers department PR submission only.':'Eligible substitute: active Finance & Accounting Employee with no conflicting Finance approval assignment.';
 }
 function labelFor(d:Delegation){
  if(d.revoked_at)return 'Revoked';
@@ -30,7 +32,21 @@ export default function ApprovalDelegationPage(){
  const myId=DB.currentUser?.id;
  const load=async()=>{const response=await delegationAPI.list();setData(response);return response;};
  useEffect(()=>{if(!CLOUD_API_BASE)return;void load().catch(e=>setError(e instanceof Error?e.message:String(e)))},[]);
- const availableAssignments=useMemo(()=> (data?.principals||[]).filter(p=>p.user&&(admin||p.user.id===myId)),[admin,data,myId]);
+ // The Operations delegation must never disappear from the Admin selector just
+ // because an appointment is vacant or an older Worker omitted the role. Only
+ // the Worker can authorize a submitted request; the placeholder has no user.
+ const availableAssignments=useMemo(()=>{
+  const assignments=(data?.principals||[]).filter(p=>admin||p.user?.id===myId);
+  if(!data||!admin)return assignments;
+  const withVacancies=[...assignments];
+  if(!withVacancies.some(p=>p.role==='Operations Head'))
+   withVacancies.push({role:'Operations Head',department:'',user:null,eligibleStaffIds:[]});
+  if(!withVacancies.some(p=>p.role==='Department Head'&&hr(p.department)))
+   withVacancies.push({role:'Department Head',department:'Human Resources',user:null,eligibleStaffIds:[]});
+  return withVacancies;
+ },[admin,data,myId]);
+ const operationsSupported=Boolean(data?.principals?.some(p=>p.role==='Operations Head'));
+ const operationsHeadAppointed=Boolean(data?.principals?.some(p=>p.role==='Operations Head'&&p.user));
  const keyFor=(role:DelegationRole,department:string)=>`${role}::${department}`;
  const chosen=availableAssignments.find(p=>keyFor(p.role,p.department)===chosenAssignment)||availableAssignments[0];
  const selectedRole=chosen?.role;
@@ -46,7 +62,7 @@ export default function ApprovalDelegationPage(){
    return staff.filter(person=>allowed.has(person.id));
   }
   // Retain compatibility while the updated Worker is being deployed.
-  return staff.filter(person=>person.id!==primary.id&&(selectedRole==='Procurement Head'
+  return staff.filter(person=>person.id!==primary.id&&(selectedRole==='Operations Head'?person.app_role==='Operations Officer'&&person.department.toLowerCase().trim()==='operations':selectedRole==='Procurement Head'
    ?person.app_role==='Procurement Officer'&&person.department.toLowerCase().trim()==='procurement'
    :selectedRole==='Department Head'?person.app_role==='Employee'&&person.department.trim().toLowerCase()===selectedDepartment.trim().toLowerCase():person.app_role==='Employee'&&finance(person.department)));
  },[data,chosen,selectedRole,selectedDepartment,primary]);
@@ -55,9 +71,16 @@ export default function ApprovalDelegationPage(){
   if(delegate&&data&&!eligible.some(person=>person.id===delegate))setDelegate('');
  },[delegate,data,eligible]);
  const noStaffReason=useMemo(()=>{
-  if(!data||!primary||!selectedRole||eligible.length)return '';
+  if(!data||!selectedRole||eligible.length)return '';
+  if(!primary&&selectedRole==='Operations Head')return !operationsSupported
+    ?'The connected Worker is not returning Operations Head delegation. Redeploy the updated Cloudflare Worker and confirm migration 0020 is applied.'
+    :'No Operations Head is currently appointed. Admin must appoint an approved Operations Employee as Operations Head in Staff Assignments. Operations Officer will then be available as the substitute.';
+  if(!primary)return selectedRole==='Department Head'&&hr(selectedDepartment)
+    ?'No Human Resources Head is appointed. Admin must appoint an approved Human Resources employee under Staff Assignments first.'
+    :'No active primary approver is appointed for this responsibility. Ask Admin to complete Staff Assignments.';
   const staff=data.staff||[];
   const normal=(name:string)=>name.trim().toLowerCase().replace(/\s+/g,' ');
+  if(selectedRole==='Operations Head')return 'No eligible Operations Officer is available. Admin can appoint an approved Operations employee as Operations Officer under Staff Assignments, then refresh this page.';
   if(selectedRole==='Procurement Head'){
    const officers=staff.filter(p=>p.app_role==='Procurement Officer'&&p.id!==primary.id);
    if(!officers.length)return 'No active, approved account has the Procurement Officer role. Admin must approve an employee and set their role to Procurement Officer in User Verification.';
@@ -108,21 +131,24 @@ export default function ApprovalDelegationPage(){
  return <section className="max-w-6xl mx-auto space-y-5">
   <header className="bg-white rounded-xl border border-slate-200 p-5 flex flex-wrap justify-between gap-3">
    <div><h2 className="text-xl font-bold text-slate-900">Approval Delegation & Leave Requests</h2>
-    <p className="text-sm text-slate-500 mt-1">Appointed Department Heads can request temporary PR submission coverage for their department. Procurement Head and Finance approvers can request their own substitute. Admin may submit on their behalf. No self-approval is permitted.</p></div>
+    <p className="text-sm text-slate-500 mt-1">Appointed Heads (including Operations Head and Human Resources Head) can request temporary PR submission coverage for their department. Procurement Head and Finance approvers can request their own substitute. Admin may submit on their behalf. No self-approval is permitted.</p></div>
    <button className="rounded-lg border px-3 py-2 text-sm" onClick={()=>void load().catch(e=>setError(e instanceof Error?e.message:String(e)))}>Refresh</button>
   </header>
   {!CLOUD_API_BASE&&<div className="bg-amber-50 border border-amber-200 text-amber-900 p-4 rounded-lg">Cloudflare D1 must be connected to manage delegation.</div>}
   {error&&<p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
   {success&&<p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
-  {!admin&&data&&!availableAssignments.length&&<div className="bg-slate-50 border rounded-xl p-5 text-sm text-slate-600">Only currently appointed Department Heads, Procurement Head, Finance Officer, or Finance Head may submit leave/delegation requests. You can still view delegations where you are the substitute.</div>}
+  {!admin&&data&&!availableAssignments.length&&<div className="bg-slate-50 border rounded-xl p-5 text-sm text-slate-600">Only currently appointed Operations / Human Resources / other Department Heads, Procurement Head, Finance Officer, or Finance Head may submit leave/delegation requests. You can still view delegations where you are the substitute.</div>}
   {(admin||availableAssignments.length>0)&&<form onSubmit={submit} className="bg-white border rounded-xl p-5 space-y-4">
    <div><h3 className="text-base font-bold">{admin?'Submit on behalf of an assigned approver':'Request leave / temporary approval coverage'}</h3>
-    <p className="text-sm text-slate-500">{admin?'Admin-submitted delegations are authorized immediately and recorded with the submitting account.':'Your request goes to Admin for review. Until approved, the substitute has no signing authority.'} Department Head coverage is limited to PR submission; the Admin final approval step cannot be delegated.</p></div>
+    <p className="text-sm text-slate-500">{admin?'Admin-submitted delegations are authorized immediately and recorded with the submitting account.':'Your request goes to Admin for review. Until approved, the substitute has no signing authority.'} Department Head coverage is limited to PR submission; the Admin final approval step cannot be delegated.</p>
+    <p className="mt-2 text-xs text-slate-600">For Operations, select <strong>Operations Head → Operations Officer</strong> under Approval responsibility. Operations Officer is the substitute you choose in the Authorized substitute field, not a separate approval step.</p>
+    {admin&&data&&!operationsSupported&&<p role="alert" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"><strong>Operations delegation backend update needed:</strong> The current Worker did not return the Operations Head role. The entry is displayed for setup, but delegation cannot be submitted until the updated Worker is deployed and migration 0020 has been applied.</p>}
+    {admin&&data&&operationsSupported&&!operationsHeadAppointed&&<p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Operations Head is supported but no approved Head is appointed. Open Staff Assignments to appoint one; then select an Operations Officer as substitute.</p>}</div>
    <div className="grid gap-3 lg:grid-cols-2">
-    <label className="text-sm font-semibold">Approval responsibility<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={chosen?keyFor(chosen.role,chosen.department):''} onChange={e=>{setChosenAssignment(e.target.value);setDelegate('')}} required>{!chosen&&<option value="">Select responsibility</option>}{availableAssignments.map(p=><option key={keyFor(p.role,p.department)} value={keyFor(p.role,p.department)}>{p.role==='Department Head'?`${p.department} · Department Head`:p.role}</option>)}</select></label>
+    <label className="text-sm font-semibold">Approval responsibility<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={chosen?keyFor(chosen.role,chosen.department):''} onChange={e=>{setChosenAssignment(e.target.value);setDelegate('')}} required>{!chosen&&<option value="">Select responsibility</option>}{availableAssignments.map(p=><option key={keyFor(p.role,p.department)} value={keyFor(p.role,p.department)}>{roleLabel(p.role,p.department)}</option>)}</select></label>
     <label className="text-sm font-semibold">Assigned primary approver<input className="block mt-1 w-full p-2.5 rounded-lg border bg-slate-50 font-normal" readOnly value={primary?`${primary.name} · ${primary.department}`:'No eligible primary approver assigned'} /></label>
     <label className="text-sm font-semibold">Request type<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={kind} onChange={e=>setKind(e.target.value as RequestKind)}><option value="Leave">Leave / absence coverage</option><option value="Delegation">Temporary delegation</option></select></label>
-    <label className="text-sm font-semibold">Authorized substitute<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={delegate} required onChange={e=>setDelegate(e.target.value)}><option value="">{!data?'Loading eligible staff…':eligible.length?'Choose eligible staff':'No eligible staff available'}</option>{eligible.map(p=><option key={p.id} value={p.id}>{p.name} · {p.department}</option>)}</select><span className="mt-1 block text-xs text-slate-500 font-normal">{selectedRole?description(selectedRole):''}</span></label>
+    <label className="text-sm font-semibold">Authorized substitute<select className="block mt-1 w-full p-2.5 rounded-lg border font-normal" value={delegate} required onChange={e=>setDelegate(e.target.value)}><option value="">{!data?'Loading eligible staff…':eligible.length?'Choose eligible staff':'No eligible staff available'}</option>{eligible.map(p=><option key={p.id} value={p.id}>{p.name} · {p.app_role} · {p.department}</option>)}</select><span className="mt-1 block text-xs text-slate-500 font-normal">{selectedRole?description(selectedRole):''}</span></label>
     {noStaffReason&&<div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 lg:col-span-2">
       <p className="font-semibold">Why no eligible staff are listed</p>
       <p className="mt-1 leading-6">{noStaffReason}</p>
@@ -138,10 +164,10 @@ export default function ApprovalDelegationPage(){
   </form>}
   {admin&&pending.length>0&&<section className="bg-white border rounded-xl overflow-hidden">
    <div className="p-5 border-b"><h3 className="font-bold">Requests awaiting Admin review ({pending.length})</h3><p className="text-sm text-slate-500">Check leave dates and the proposed substitute before granting temporary approval rights.</p></div>
-   <div className="divide-y">{pending.map(d=><div key={d.id} className="p-4 flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between"><div className="text-sm"><p className="font-semibold text-slate-900">{d.primary_name} · {d.step_role}{d.department?' ('+d.department+')':''} · {d.request_kind}</p><p className="text-slate-600">{d.delegate_name} covering {d.starts_on} to {d.ends_on}</p><p className="text-slate-500">{d.reason}</p></div><div className="flex gap-2"><button disabled={busy} onClick={()=>void review(d,'reject')} className="border border-rose-300 text-rose-700 font-semibold rounded-lg px-3 py-2 text-sm">Reject</button><button disabled={busy} onClick={()=>void review(d,'approve')} className="bg-[#a64f32] text-white font-semibold rounded-lg px-3 py-2 text-sm">Approve request</button></div></div>)}</div>
+   <div className="divide-y">{pending.map(d=><div key={d.id} className="p-4 flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between"><div className="text-sm"><p className="font-semibold text-slate-900">{d.primary_name} · {roleLabel(d.step_role,d.department)}{d.department&&d.step_role!=='Department Head'?' ('+d.department+')':''} · {d.request_kind}</p><p className="text-slate-600">{d.delegate_name} covering {d.starts_on} to {d.ends_on}</p><p className="text-slate-500">{d.reason}</p></div><div className="flex gap-2"><button disabled={busy} onClick={()=>void review(d,'reject')} className="border border-rose-300 text-rose-700 font-semibold rounded-lg px-3 py-2 text-sm">Reject</button><button disabled={busy} onClick={()=>void review(d,'approve')} className="bg-[#a64f32] text-white font-semibold rounded-lg px-3 py-2 text-sm">Approve request</button></div></div>)}</div>
   </section>}
   <section className="bg-white border rounded-xl overflow-hidden"><div className="p-5 border-b"><h3 className="font-bold">Delegation requests & history</h3><p className="text-xs text-slate-500 mt-1">Pending requests never grant approval rights. Only approved delegations within their date range are effective; Department Head substitutes can submit PRs but cannot approve them.</p></div>
-   <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr>{['Type / responsibility','Assigned approver','Substitute','Dates','Submitted by','Status','Reason / decision','Actions'].map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{data?.delegations.map(d=>{const status=labelFor(d);return <tr key={d.id} className="border-t"><td className="p-3"><strong>{d.step_role}{d.department?' · '+d.department:''}</strong><div className="text-xs text-slate-500">{d.request_kind||'Delegation'}</div></td><td className="p-3">{d.primary_name}</td><td className="p-3">{d.delegate_name}</td><td className="p-3 whitespace-nowrap">{d.starts_on} – {d.ends_on}</td><td className="p-3">{d.submitted_by_name||'—'}</td><td className="p-3"><span className={'rounded-full px-2.5 py-1 text-xs font-bold '+cls(status)}>{status}</span></td><td className="p-3 max-w-56 break-words">{d.reason}{d.review_note&&<div className="text-xs text-slate-500 mt-1">Admin note: {d.review_note}</div>}</td><td className="p-3">{(admin||d.primary_user_id===myId)&&!d.revoked_at&&(d.review_status==='Pending'||d.review_status==='Approved'&&d.ends_on>=today())&&<button disabled={busy} onClick={()=>void revoke(d)} className="text-rose-700 font-semibold hover:underline">{d.review_status==='Pending'?'Cancel request':'Revoke'}</button>}</td></tr>})}</tbody></table>
+   <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-600"><tr>{['Type / responsibility','Assigned approver','Substitute','Dates','Submitted by','Status','Reason / decision','Actions'].map(h=><th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{data?.delegations.map(d=>{const status=labelFor(d);return <tr key={d.id} className="border-t"><td className="p-3"><strong>{roleLabel(d.step_role,d.department)}{d.department&&d.step_role!=='Department Head'?' · '+d.department:''}</strong><div className="text-xs text-slate-500">{d.request_kind||'Delegation'}</div></td><td className="p-3">{d.primary_name}</td><td className="p-3">{d.delegate_name}</td><td className="p-3 whitespace-nowrap">{d.starts_on} – {d.ends_on}</td><td className="p-3">{d.submitted_by_name||'—'}</td><td className="p-3"><span className={'rounded-full px-2.5 py-1 text-xs font-bold '+cls(status)}>{status}</span></td><td className="p-3 max-w-56 break-words">{d.reason}{d.review_note&&<div className="text-xs text-slate-500 mt-1">Admin note: {d.review_note}</div>}</td><td className="p-3">{(admin||d.primary_user_id===myId)&&!d.revoked_at&&(d.review_status==='Pending'||d.review_status==='Approved'&&d.ends_on>=today())&&<button disabled={busy} onClick={()=>void revoke(d)} className="text-rose-700 font-semibold hover:underline">{d.review_status==='Pending'?'Cancel request':'Revoke'}</button>}</td></tr>})}</tbody></table>
     {!data?.delegations.length&&<p className="p-6 text-sm text-slate-500">No delegation requests registered.</p>}</div>
   </section>
  </section>;

@@ -4,7 +4,9 @@ import type { StaffAssignment } from '../domain/staffPositions';
 import { DB } from '../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
-export function renderUsersView(assignments: StaffAssignment[] = [], positionsLoading = false) {
+export function renderUsersView(assignments: StaffAssignment[] = [], positionsLoading = false, search = '') {
+    const normalized=search.trim().toLowerCase();
+    const filtered=normalized?DB.users.filter(u=>[u.name,u.username,u.email,u.department,u.role,u.companyName,u.status,getEffectivePosition(u,assignments).label].some(value=>String(value||'').toLowerCase().includes(normalized))):DB.users;
     return `
         <div class="space-y-4">
             <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -20,7 +22,8 @@ export function renderUsersView(assignments: StaffAssignment[] = [], positionsLo
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-200">
-                            ${DB.users.map(u => `
+                            ${filtered.length===0?'<tr><td colspan="5" class="p-6 text-center text-sm text-slate-500">No accounts match the current search.</td></tr>':''}
+                            ${filtered.map(u => `
                                 <tr class="hover:bg-slate-50">
                                     <td class="p-4 font-bold text-slate-900">${u.role === 'Admin' ? 'Admin' : u.name} <span class="text-xs text-slate-400">(@${u.username})</span></td>
                                     <td class="p-4 text-xs">
@@ -55,7 +58,7 @@ export function renderUsersView(assignments: StaffAssignment[] = [], positionsLo
                                                 ${u.status === 'Pending Verification' ? `
                                                     <button data-command="rejectUser" data-arg1="${u.id}" class="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold shadow-sm transition-colors">Reject</button>
                                                 ` : ''}
-                                                <button data-command="deleteUserAccount" data-arg1="${u.id}" class="px-3 py-1 bg-slate-700 hover:bg-slate-800 text-white rounded text-xs font-semibold shadow-sm transition-colors">Delete Account</button>
+                                                <button data-command="deleteUserAccount" data-arg1="${u.id}" class="px-3 py-1 bg-slate-700 hover:bg-slate-800 text-white rounded text-xs font-semibold shadow-sm transition-colors">Remove Account</button>
                                             </div>
                                         `}
                                     </td>

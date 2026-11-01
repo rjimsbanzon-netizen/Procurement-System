@@ -1,5 +1,6 @@
-export type Role = 'Admin' | 'Procurement Head' | 'Procurement Officer' | 'Employee' | 'Supplier';
-export type PermissionRole = Role | 'Department Head' | 'Finance Officer' | 'Finance Head';
+import type { QuantityUnit } from '../domain/measurementUnits';
+export type Role = 'Admin' | 'Procurement Head' | 'Procurement Officer' | 'Operations Officer' | 'Employee' | 'Supplier';
+export type PermissionRole = Exclude<Role, 'Operations Officer'> | 'Department Head' | 'Finance Officer' | 'Finance Head';
 export type Permission =
   | 'create_pr' | 'approve_pr' | 'record_delivery' | 'manage_delivery_issues'
   | 'approve_amendment' | 'process_payment' | 'confirm_payment'
@@ -35,6 +36,7 @@ export interface RequisitionRecord extends ProcurementRecord {
   specs: string;
   status: string;
   quantity: number;
+  unit?: QuantityUnit;
   unitPrice: number;
   totalCost: number;
   requestedBy: string;
@@ -50,6 +52,7 @@ export interface OrderRecord extends ProcurementRecord {
   department: string;
   itemTitle: string;
   quantity: number;
+  unit?: QuantityUnit;
   totalCost: number;
   status: string;
   poDate?: string;
@@ -76,6 +79,7 @@ export interface DeliveryRecord extends ProcurementRecord {
   complianceStatus: string;
   orderedQty: number;
   deliveredQty: number;
+  unit?: QuantityUnit;
   expectedDate?: string;
   actualDate?: string;
   specs?: string;

@@ -31,10 +31,14 @@ export function renderCreateStockNeedModal() {
                         <input type="text" id="sn-title" required readonly value="${preferredPR?.itemTitle || ''}" placeholder="Select an approved request" class="w-full text-xs p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500">
                     </div>
 
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                         <div>
-                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Target Quantity</label>
+                            <label id="sn-qty-label" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Target Quantity (${preferredPR?.unit || 'units'})</label>
                             <input type="number" id="sn-qty" min="1" required readonly value="${preferredPR?.quantity || ''}" placeholder="Select request" class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
+                        </div>
+                        <div>
+                            <label for="sn-unit" class="block text-xs font-semibold uppercase text-slate-600 mb-1">Unit of Measurement</label>
+                            <input id="sn-unit" type="text" readonly value="${preferredPR?.unit || 'units'}" class="w-full text-xs p-2.5 border border-slate-300 rounded-lg bg-slate-50" title="Inherited from the approved purchase requisition">
                         </div>
                         <div>
                             <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Budget Cap (₱ PHP)</label>

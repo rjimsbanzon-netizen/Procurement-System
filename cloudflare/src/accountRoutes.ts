@@ -43,6 +43,7 @@ function publicPositions(person: Row, appointments: Appointment[]): string[] {
   const positions = new Set<string>();
   if (person.app_role === 'Procurement Head' && dept === 'procurement') positions.add('Procurement Head');
   if (person.app_role === 'Procurement Officer' && dept === 'procurement') positions.add('Procurement Officer');
+  if (person.app_role === 'Operations Officer' && dept === 'operations') positions.add('Operations Officer');
   for (const item of appointments) {
     if (item.user_id !== person.id) continue;
     if (item.step_role === 'Finance Officer' && item.department === '*' && isFinance(dept)) {
@@ -50,6 +51,7 @@ function publicPositions(person: Row, appointments: Appointment[]): string[] {
     } else if (item.step_role === 'Department Head' && normDept(item.department) === dept) {
       if (isFinance(dept)) positions.add('Finance Head');
       else if (dept === 'procurement' && person.app_role === 'Procurement Head') positions.add('Procurement Head');
+      else if (dept === 'operations') positions.add('Operations Head');
       else if (dept && dept !== 'procurement' && dept !== 'executive') positions.add('Department Head');
     }
   }

@@ -8,7 +8,7 @@ import { safeBidText } from './shared';
 
 /** Procurement-only bids, comparison, supplier selection, and PO handoff. */
 export function renderBidComparisonView() {
-    if (!canManageBidding()) return '';
+    if (!['Admin','Procurement Head'].includes(DB.currentUser.role)) return '';
     const canCreateNeed = canManageBidding();
     return `
                 <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">

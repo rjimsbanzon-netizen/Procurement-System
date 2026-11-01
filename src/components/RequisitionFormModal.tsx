@@ -9,6 +9,8 @@ import { logAudit } from '../services/audit';
 import { showToast } from '../services/toast';
 import { hasPermission } from '../domain/permissions';
 import { fieldClass, mainButton, peso, secondaryButton } from './CoreScreenUI';
+import { unitLabel, type QuantityUnit } from '../domain/measurementUnits';
+import { SearchableMeasurementUnit } from './SearchableMeasurementUnit';
 
 /** Requisition creation is React-managed; cloud submission still uses the existing D1 approval workflow. */
 export function RequisitionFormModal({ editId }: { editId?: string }) {
@@ -17,6 +19,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
   const [title, setTitle] = useState(String(existing?.itemTitle || ''));
   const [specs, setSpecs] = useState(String(existing?.specs || ''));
   const [quantity, setQuantity] = useState(String(existing?.quantity || 1));
+  const [unitOfMeasure, setUnitOfMeasure] = useState<QuantityUnit>(unitLabel(existing?.unit));
   const [price, setPrice] = useState(String(existing?.unitPrice ?? ''));
   const [date, setDate] = useState(String(existing?.targetDate || ''));
   const [remarks, setRemarks] = useState(String(existing?.remarks || ''));
@@ -42,7 +45,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
     }
     setBusy(true); setError('');
     try {
-      const data = { itemTitle: title.trim(), specs: specs.trim(), quantity: qty, unitPrice: unit,
+      const data = { itemTitle: title.trim(), specs: specs.trim(), quantity: qty, unit: unitOfMeasure, unitPrice: unit,
         targetDate: date, remarks: remarks.trim(), totalCost: Math.round(qty * unit * 100) / 100 };
       if (existing && canEdit) {
         Object.assign(existing, data);
@@ -83,9 +86,22 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
       {!permitted ? <p role="alert" className="rounded-lg bg-rose-50 p-4 text-sm text-rose-800">You cannot modify this requisition. Cloud approval records must be changed through an authorized server-side workflow.</p> : <form className="space-y-4" onSubmit={event => void submit(event)}>
         <label className="block text-sm font-semibold text-slate-700">Item title / description<input className={`${fieldClass} mt-1`} value={title} onChange={e => setTitle(e.target.value)} maxLength={200} required placeholder="e.g. Ergonomic Office Chairs"/></label>
         <label className="block text-sm font-semibold text-slate-700">Specifications & requirements<textarea className={`${fieldClass} mt-1`} rows={3} value={specs} onChange={e => setSpecs(e.target.value)} required placeholder="Detailed dimensions and required specifications"/></label>
-        <div className="grid gap-3 sm:grid-cols-3"><label className="block text-sm font-semibold text-slate-700">Quantity<input className={`${fieldClass} mt-1`} type="number" min="1" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} required/></label>
-          <label className="block text-sm font-semibold text-slate-700">Est. unit price (₱)<input className={`${fieldClass} mt-1`} type="number" min="0" step="0.01" value={price} onChange={e => setPrice(e.target.value)} required/></label>
-          <label className="block text-sm font-semibold text-slate-700">Target needed<input className={`${fieldClass} mt-1`} type="date" value={date} onChange={e => setDate(e.target.value)} required/></label></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm font-semibold text-slate-700">Quantity
+            <input className={`${fieldClass} mt-1`} type="number" min="1" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} required/>
+          </label>
+          <SearchableMeasurementUnit
+            value={unitOfMeasure}
+            onChange={setUnitOfMeasure}
+            inputClassName={fieldClass}
+          />
+          <label className="block text-sm font-semibold text-slate-700">Est. unit price (₱)
+            <input className={`${fieldClass} mt-1`} type="number" min="0" step="0.01" value={price} onChange={e => setPrice(e.target.value)} required/>
+          </label>
+          <label className="block text-sm font-semibold text-slate-700">Target needed
+            <input className={`${fieldClass} mt-1`} type="date" value={date} onChange={e => setDate(e.target.value)} required/>
+          </label>
+        </div>
         <label className="block text-sm font-semibold text-slate-700">Remarks / justification<textarea className={`${fieldClass} mt-1`} rows={2} value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Purpose for the request"/></label>
         <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Estimated total: <strong className="text-slate-900">{peso(Number(quantity) * Number(price))}</strong></div>
         {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}

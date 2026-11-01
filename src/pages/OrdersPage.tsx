@@ -41,7 +41,7 @@ function OrderDetails({ order, remaining }: { order: OrderRecord; remaining: num
   const details = [
     ['Linked PR', order.prId || '—'],
     ['Expected delivery', order.expectedDate || '—'],
-    ['Quantity outstanding', String(remaining)],
+    ['Quantity outstanding', `${remaining} ${order.unit || 'units'}`],
     ['Supplier', order.supplierName || '—'],
     ['Specifications', order.specs || '—'],
     ['Signed by', order.signedBy || 'Awaiting signature'],
@@ -118,7 +118,7 @@ export default function OrdersPage() {
                       <td className="font-semibold text-slate-600">{order.prId || '—'}</td>
                       <td className="font-medium text-slate-900">{order.supplierName || '—'}</td>
                       <td>{order.department || '—'}</td>
-                      <td><strong className="break-words font-semibold text-slate-900">{order.itemTitle}</strong><p className="mt-1 text-xs text-slate-500">Qty: {order.quantity}</p></td>
+                      <td><strong className="break-words font-semibold text-slate-900">{order.itemTitle}</strong><p className="mt-1 text-xs text-slate-500">Qty: {order.quantity} {order.unit || 'units'}</p></td>
                       <td className="font-bold text-slate-900"><span className="whitespace-nowrap">{peso(order.totalCost)}</span></td>
                       <td><span className="whitespace-nowrap">{order.poDate || '—'}</span></td>
                       <td><OrderActions {...actions} /></td>
@@ -142,7 +142,7 @@ export default function OrdersPage() {
                 </div>
                 <div className="mt-3 min-w-0 border-t border-slate-100 pt-3">
                   <p className="break-words font-semibold text-slate-900">{order.itemTitle}</p>
-                  <p className="mt-1 text-xs text-slate-500">Quantity: {order.quantity}</p>
+                  <p className="mt-1 text-xs text-slate-500">Quantity: {order.quantity} {order.unit || 'units'}</p>
                 </div>
                 <dl className="pf-order-card-meta">
                   <div><dt>Supplier</dt><dd>{order.supplierName || '—'}</dd></div>

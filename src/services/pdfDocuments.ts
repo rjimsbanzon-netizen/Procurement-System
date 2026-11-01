@@ -30,13 +30,13 @@ function buildLines(type: PrintableType, record: ProcurementRecord): { sections:
     case 'PR': return {
       sections: [
         ['REQUEST DETAILS', [['Reference number', record.id], ['Department', record.department], ['Requested by', record.requestedBy], ['Date requested', record.createdAt], ['Needed by', record.targetDate], ['Status', record.status]]],
-        ['ITEMS & JUSTIFICATION', [['Item / Description', record.itemTitle], ['Specifications', record.specs], ['Quantity', record.quantity], ['Estimated unit cost', money(record.unitPrice)], ['Estimated total', money(record.totalCost)], ['Purpose / Remarks', record.remarks]]],
+        ['ITEMS & JUSTIFICATION', [['Item / Description', record.itemTitle], ['Specifications', record.specs], ['Quantity', `${record.quantity} ${record.unit || 'units'}`], ['Estimated unit cost', money(record.unitPrice)], ['Estimated total', money(record.totalCost)], ['Purpose / Remarks', record.remarks]]],
       ], signers: ['Requested by', 'Reviewed by', 'Approved by'],
     };
     case 'PO': return {
       sections: [
         ['ORDER INFORMATION', [['PO number', record.id], ['PR reference', record.prId], ['Supplier', record.supplierName], ['Department', record.department], ['Date issued', record.poDate], ['Status', record.status]]],
-        ['ORDER DETAILS', [['Item', record.itemTitle], ['Specifications', record.specs], ['Quantity', record.quantity], ['Agreed unit price', money(record.unitPrice ?? (Number(record.totalCost || 0) / (Number(record.quantity) || 1)))], ['Total amount', money(record.totalCost)], ['Terms', record.agreedTerms]]],
+        ['ORDER DETAILS', [['Item', record.itemTitle], ['Specifications', record.specs], ['Quantity', `${record.quantity} ${record.unit || 'units'}`], ['Agreed unit price', money(record.unitPrice ?? (Number(record.totalCost || 0) / (Number(record.quantity) || 1)))], ['Total amount', money(record.totalCost)], ['Terms', record.agreedTerms]]],
       ], signers: ['Prepared by', 'Authorized by', 'Supplier acknowledgment'],
     };
     case 'AGREEMENT': return {

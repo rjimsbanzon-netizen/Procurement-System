@@ -84,7 +84,7 @@ export async function revokeUser(userId) {
 export async function deleteUserAccount(userId) {
     const u = DB.users.find(usr => usr.id === userId);
     if (!u || u.role === 'Admin') return;
-    if (!await confirmAction({title:'Permanently delete user account',message:`Permanently delete ${u.name} (@${u.username})? This removes the account and all active sessions. This cannot be undone.`,tone:'danger',confirmText:'Delete account'})) return;
+    if (!await confirmAction({title:'Remove approved account',message:`Remove ${u.name} (@${u.username}) from active accounts? Their login, appointments and delegations will end, while historical procurement and audit records remain available.`,tone:'danger',confirmText:'Remove account'})) return;
     if (CLOUD_API_BASE) {
         try {
             await cloudRequest(`/users/${encodeURIComponent(u.id)}`, { method: 'DELETE' });
@@ -96,7 +96,7 @@ export async function deleteUserAccount(userId) {
     DB.users = DB.users.filter(account => account.id !== userId);
     logAudit('User Account Deleted', `Admin permanently deleted ${u.name} (@${u.username}).`);
     Storage.save(DB);
-    showToast('User account deleted.', 'success');
+    showToast('Account removed from active users; procurement history retained.', 'success');
     renderApp();
 }
 

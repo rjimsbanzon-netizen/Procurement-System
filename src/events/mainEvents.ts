@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { unitLabel, isQuantityUnit, measurementUnitOptionsHtml } from '../domain/measurementUnits';
 import { requestInput } from '../services/actionDialogs';
 import { respondToAmendment } from '../actions/amendmentActions';
 import { cancelProposalMeeting, canRequestMeetingReschedule, canReviewMeetingReschedule, canRescheduleProposalMeeting } from '../actions/biddingActions';
@@ -104,6 +105,10 @@ export function attachMainEvents() {
             const pr = getAvailableRequisitions().find(item => item.id === needRequestSelect.value);
             document.getElementById('sn-title').value = pr?.itemTitle || '';
             document.getElementById('sn-qty').value = pr?.quantity || '';
+            const snUnit = document.getElementById('sn-unit') as HTMLInputElement | null;
+            if (snUnit) snUnit.value = pr?.unit || 'units';
+            const snQtyLabel = document.getElementById('sn-qty-label');
+            if (snQtyLabel) snQtyLabel.textContent = `Target Quantity (${pr?.unit || 'units'})`;
             document.getElementById('sn-budget').value = pr?.totalCost || '';
             document.getElementById('sn-specs').value = pr?.specs || '';
         });
@@ -138,6 +143,38 @@ export function attachMainEvents() {
         });
     });
 
+    // Searchable units on the legacy PR modal. Select a result to save its stable code.
+    const unitSearch = document.getElementById('pr-unit-search') as HTMLInputElement | null;
+    const unitSelect = document.getElementById('pr-unit') as HTMLSelectElement | null;
+    if (unitSearch && unitSelect) {
+        const allUnits = measurementUnitOptionsHtml();
+        const filterUnits = () => {
+            const previous = unitSelect.value;
+            const filtered = measurementUnitOptionsHtml(unitSearch.value);
+            unitSelect.innerHTML = '<option value="" disabled>Choose a matching unit…</option>' + (filtered || '<option value="" disabled>No matching units</option>');
+            unitSelect.value = [...unitSelect.options].some(option => option.value === previous && option.value !== '') ? previous : '';
+        };
+        unitSearch.addEventListener('input', filterUnits);
+        unitSearch.addEventListener('keydown', event => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault(); // Do not accidentally submit the requisition.
+            const first = [...unitSelect.options].find(option => option.value && !option.disabled);
+            if (first) {
+                unitSelect.value = first.value;
+                unitSearch.value = '';
+                unitSelect.innerHTML = allUnits;
+                unitSelect.value = first.value;
+                unitSelect.focus();
+            }
+        });
+        unitSelect.addEventListener('change', () => {
+            const selected = unitSelect.value;
+            unitSearch.value = '';
+            unitSelect.innerHTML = allUnits;
+            unitSelect.value = selected;
+        });
+    }
+
     // Forms Submit Events
     const createPrForm = document.getElementById('create-pr-form');
     if (createPrForm) {
@@ -145,7 +182,17 @@ export function attachMainEvents() {
             e.preventDefault();
             const title = document.getElementById('pr-title').value.trim();
             const specs = document.getElementById('pr-specs').value.trim();
-            const qty = parseInt(document.getElementById('pr-qty').value);
+            const qty = Number(document.getElementById('pr-qty').value);
+            if(!Number.isInteger(qty)||qty<1){
+                showToast('Enter a whole-number quantity of at least 1 and select its measurement unit.', 'error');
+                return;
+            }
+            const selectedUnit = (document.getElementById('pr-unit') as HTMLSelectElement)?.value;
+            if (!isQuantityUnit(selectedUnit)) {
+                showToast('Choose a valid unit of measurement.', 'error');
+                return;
+            }
+            const unit = unitLabel(selectedUnit);
             const price = parseFloat(document.getElementById('pr-price').value);
             const targetDate = document.getElementById('pr-date').value;
             const remarks = document.getElementById('pr-remarks').value.trim();
@@ -158,6 +205,7 @@ export function attachMainEvents() {
                 targetDate: targetDate,
                 unitPrice: price,
                 quantity: qty,
+                unit,
                 totalCost: qty * price,
                 status: 'Pending',
                 requestedBy: DB.currentUser.name,
@@ -210,6 +258,7 @@ export function attachMainEvents() {
                     specs: order.specs,
                     orderedQty: order.quantity,
                     deliveredQty: qtyDelivered,
+                    unit: order.unit || 'units',
                     // Expected date comes from the approved requisition / PO, never the actual delivery date.
                     expectedDate: order.expectedDate || DB.requisitions.find(pr => pr.id === order.prId)?.targetDate || '',
                     actualDate: delDate,
@@ -462,6 +511,7 @@ export function attachMainEvents() {
                 prId: pr.id,
                 title,
                 targetQty,
+                unit: pr?.unit || 'units',
                 budgetCap,
                 techSpecs,
                 status: 'Published',
@@ -1020,6 +1070,7 @@ export function attachMainEvents() {
                 itemTitle: need.title,
                 specs,
                 quantity,
+                unit: need.unit || 'units',
                 unitPrice,
                 totalCost: quantity * unitPrice,
                 agreedTerms: terms,

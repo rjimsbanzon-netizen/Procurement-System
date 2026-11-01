@@ -7,7 +7,7 @@ import type { StaffAssignment } from '../domain/staffPositions';
 import { DB, ui } from '../store/state';
 import { getCurrentPermissionRole } from '../domain/permissions';
 import { activeActingResponsibilities } from '../domain/effectiveDelegation';
-import { CLOUD_API_BASE, refreshActiveDelegationAccess } from '../services/cloud';
+import { CLOUD_API_BASE, cloudRequest, mapCloudUser, refreshActiveDelegationAccess } from '../services/cloud';
 import { accountAPI } from '../services/account';
 import { showToast } from '../services/toast';
 import { navigateTo, renderApp } from '../core/renderBridge';
@@ -61,6 +61,19 @@ export function Header({ onOpenMenu, isMenuOpen }: { onOpenMenu: () => void; isM
           }
           renderApp();
         }
+        // D1 is authoritative for permanent roles too. Refreshing assignments alone
+        // would leave the upper-right badge stuck on the old app_role.
+        if(CLOUD_API_BASE){
+          const session=await cloudRequest('/auth/me') as {user?:Record<string,any>};
+          const stored=session.user;
+          if(stored&&DB.currentUser?.id===accountId){
+            const fresh=mapCloudUser(stored,DB.suppliers as never[]);
+            if(fresh.role!==DB.currentUser.role||fresh.department!==DB.currentUser.department||fresh.name!==DB.currentUser.name){
+              DB.currentUser={...DB.currentUser,...fresh};
+              renderApp();
+            }
+          }
+        }
         const previous=getCurrentPermissionRole();
         const data=await loadStaffAssignments(accountId);
         if(!alive)return;
@@ -75,7 +88,7 @@ export function Header({ onOpenMenu, isMenuOpen }: { onOpenMenu: () => void; isM
     const onFocus=()=>{void refresh();};
     const onUpdated=()=>{void refresh();};
     void refresh();
-    const timer=window.setInterval(()=>{void refresh();},15_000);
+    const timer=window.setInterval(()=>{void refresh();},5_000);
     document.addEventListener('visibilitychange',onVisible);
     window.addEventListener('focus',onFocus);
     window.addEventListener('procureflow:delegation-updated',onUpdated);
@@ -89,10 +102,10 @@ export function Header({ onOpenMenu, isMenuOpen }: { onOpenMenu: () => void; isM
   },[accountId,accountRole]);
   const position = user ? getEffectivePosition(user, assignments) : null;
   const acting=activeActingResponsibilities();
-  const priority=['Finance Officer','Finance Head','Procurement Head','Department Head'];
+  const priority=['Finance Officer','Finance Head','Procurement Head','Operations Head','Department Head'];
   const actingRole=acting.slice().sort((a,b)=>priority.indexOf(a.role)-priority.indexOf(b.role))[0];
   const positionLabel = actingRole
-    ? `Acting ${actingRole.role}${actingRole.department ? ` • ${actingRole.department}` : ''} (until ${actingRole.endsOn})`
+    ? `Acting ${actingRole.role==='Department Head'&&actingRole.department.toLowerCase()==='human resources'?'Human Resources Head':actingRole.role}${actingRole.department&&actingRole.department.toLowerCase()!=='human resources' ? ` • ${actingRole.department}` : ''} (until ${actingRole.endsOn})`
     : user?.role==='Admin' ? 'Executive' : position ? (['Head','Finance Head','Finance Officer'].includes(position.name) ? `${position.name} • ${position.department}` : position.label) : '';
   return <header className="enterprise-header pf-app-header bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between shadow-sm z-10">
     <div className="pf-header-leading flex min-w-0 items-center gap-3">

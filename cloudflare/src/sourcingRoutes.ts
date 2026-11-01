@@ -345,6 +345,14 @@ export async function handleSourcingRoutes(request:Request, env:Env, user:User, 
     return j({ok:true,needId,closesAt:new Date(closesAt).toISOString(),manuallyClosed:manualClosed},200,cors);
   }
 
+  if (path === '/sourcing/bids' && method === 'GET') {
+    if (!adminOrHead(user) && !isSupplier(user)) return fail('Only Procurement Head, Admin, or the submitting supplier may view quotations.',403);
+    const {data}=await snapshot(env);
+    const own=isSupplier(user)?supplierKey(data,user):null;
+    const bids=isSupplier(user)?(data.bids || []).filter(b=>b.supplierId===own?.id||(own?.name&&lower(b.supplierName)===lower(own.name))):(data.bids||[]);
+    return j({bids},200,cors);
+  }
+
   // Server-side acceptance: a tampered browser cannot submit after the deadline.
   if (path === '/sourcing/bids' && method === 'POST') {
     if (!isSupplier(user)) return fail('Only approved supplier accounts may submit a quotation.',403);

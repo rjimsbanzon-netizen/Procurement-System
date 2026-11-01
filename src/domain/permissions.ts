@@ -56,8 +56,8 @@ export function canAccessTab(tab) {
         case 'tracking': return isSupplier ? hasPermission('view_assigned_po') : hasPermission('create_pr') || hasPermission('approve_pr') || hasPermission('view_all_po');
         case 'bidding': return isSupplier ? hasPermission('submit_bids') : canManageBidding();
         case 'proposal_meetings': return isSupplier ? hasPermission('submit_bids') : canManageBidding();
+        case 'bid_comparison': return ['Admin','Procurement Head'].includes(DB.currentUser.role);
         case 'bidding_deadlines':
-        case 'bid_comparison':
         case 'bid_evaluation': return canManageBidding();
         case 'requisitions': return hasPermission('create_pr') || hasPermission('approve_pr');
         case 'orders': return hasPermission(isSupplier ? 'view_assigned_po' : 'view_all_po');

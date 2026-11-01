@@ -1,8 +1,11 @@
 // @ts-nocheck
 import { closeModal } from '../../actions/modalActions';
+import { DB, ui } from '../../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderInitiateAmendmentModal() {
+    const order = DB.orders.find(item=>item.id===ui.selectedRecord?.poId);
+    const unit = order?.unit || 'units';
     return `
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
             <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 border border-slate-200">
@@ -19,7 +22,7 @@ export function renderInitiateAmendmentModal() {
 
                     <div class="grid grid-cols-2 gap-3">
                         <div>
-                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Revised Quantity</label>
+                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Revised Quantity (${unit})</label>
                             <input type="number" id="amend-qty" min="1" required placeholder="Adjusted quantity" class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                         <div>

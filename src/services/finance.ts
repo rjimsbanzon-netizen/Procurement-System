@@ -2,7 +2,7 @@ import { CLOUD_API_BASE, CLOUD_TOKEN_KEY, cloudRequest } from './cloud';
 export type ApprovalStep = {number:number;role:'Department Head'|'Procurement Head'|'Finance Officer'|'Admin';status:'Pending'|'Approved'|'Rejected';comment:string;decidedAt:string|null;decidedBy:string|null};
 export type ApprovalRequest = {prId:string;requestedBy:string;department:string;amount:number;status:'Pending'|'Approved'|'Rejected';currentStep:number;totalSteps:number;createdAt:string;pr:Record<string,any>|null;financeHead:{status:'Pending'|'Approved'|'Rejected';decidedAt:string|null;decidedBy:string|null;comment:string}|null;steps:ApprovalStep[]};
 export type BudgetRow = {department:string;allocated:number;committed:number;spent:number;remaining:number;configured:boolean};
-export type FinanceSettings = {financeFrom:number;financeHeadFrom:number;adminFrom:number;assignments:{step_role:string;department:string;user_id:string;name:string;app_role:string;user_department?:string}[];invoiceVerification?:{allowed:boolean;acting:boolean;validUntil:string|null}};
+export type FinanceSettings = {financeFrom:number;financeHeadFrom:number;adminFrom:number;assignments:{step_role:string;department:string;user_id:string;name:string;app_role:string;user_department?:string}[];invoiceVerification?:{allowed:boolean;acting:boolean;validUntil:string|null;reason?:string}};
 export type InvoiceRow = {id:string;poId:string;supplierName:string;invoiceNo:string;amount:number;invoiceDate:string;documentId:string|null;status:'Submitted'|'Matched';submittedAt:string;matchedAt:string|null;reasons:string[]};
 export function requireFinanceCloud():void {
   if (!CLOUD_API_BASE) throw new Error('Finance workflows require your connected Cloudflare Worker and D1 database.');
@@ -27,6 +27,7 @@ export const financeAPI={
   removeDepartment:(name:string)=>request<{ok:boolean}>('/finance/departments','DELETE',{name}),
   moveEmployee:(userId:string,department:string)=>request<{ok:boolean}>('/finance/staff/department','PUT',{userId,department}),
   correctProcurementDepartment:(userId:string)=>request<{ok:boolean;userId:string;department:string}>('/finance/staff/procurement-department','PUT',{userId}),
+  setOperationsOfficer:(userId:string,action:'appoint'|'remove')=>request<{ok:boolean;userId:string;appRole:string}>('/finance/staff/operations-officer','PUT',{userId,action}),
   setProcurementOfficer:(userId:string,action:'appoint'|'remove')=>request<{ok:boolean;userId:string;appRole:string}>('/finance/staff/procurement-officer','PUT',{userId,action}),
   assign:(role:'Department Head'|'Finance Officer',department:string,userId:string)=>request('/finance/assignments','PUT',{role,department,userId}),
   unassign:(role:'Department Head'|'Finance Officer',department:string,userId:string)=>request('/finance/assignments','DELETE',{role,department,userId}),

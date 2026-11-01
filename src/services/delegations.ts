@@ -1,5 +1,5 @@
 import {cloudRequest,CLOUD_API_BASE} from './cloud';
-export type DelegationRole='Procurement Head'|'Finance Officer'|'Finance Head'|'Department Head';
+export type DelegationRole='Procurement Head'|'Operations Head'|'Finance Officer'|'Finance Head'|'Department Head';
 export type RequestKind='Leave'|'Delegation';
 export type ReviewStatus='Pending'|'Approved'|'Rejected'|'Cancelled';
 export type Delegation={

@@ -11,10 +11,10 @@ const finance=(department:unknown)=>['finance & accounting','finance and account
 const eligible=(u:Row|undefined|null)=>Boolean(u&&u.role==='employee'&&u.status==='approved'&&!u.access_revoked);
 const json=(data:unknown,code=200,cors:HeadersInit={})=>new Response(JSON.stringify(data),{status:code,headers:{'Content-Type':'application/json',...cors}});
 const validDate=(value:unknown)=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&!Number.isNaN(Date.parse(`${value}T00:00:00Z`))&&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;
-export const DELEGABLE_STEPS=['Procurement Head','Finance Officer','Finance Head','Department Head'] as const;
+export const DELEGABLE_STEPS=['Procurement Head','Operations Head','Finance Officer','Finance Head','Department Head'] as const;
 const STEPS=new Set<string>(DELEGABLE_STEPS);
 const isOrdinaryDepartment=(name:string)=>Boolean(name.trim())&&!['procurement','finance & accounting','finance and accounting','finance','executive'].some(d=>match(name,d));
-const normalizedScope=(role:string,department:unknown)=>role==='Department Head'&&typeof department==='string'&&isOrdinaryDepartment(department)?department.trim():role==='Department Head'?null:'';
+const normalizedScope=(role:string,department:unknown)=>role==='Department Head'&&typeof department==='string'&&isOrdinaryDepartment(department)&&!match(department,'Operations')?department.trim():role==='Department Head'?null:'';
 
 async function userById(env:Context,id:string):Promise<Row|null>{
  return env.DB.prepare('SELECT id,name,role,app_role,department,status,access_revoked FROM users WHERE id=?').bind(id).first<Row>();
@@ -28,6 +28,7 @@ export async function principalFor(env:Context,role:string,department=''):Promis
     WHERE a.step_role='Department Head' AND LOWER(TRIM(a.department))=LOWER(TRIM(?)) LIMIT 1`)
     .bind(department).first<Row>();
  }
+ if(role==='Operations Head')return env.DB.prepare("SELECT u.id,u.name,u.role,u.app_role,u.department,u.status,u.access_revoked FROM finance_approvers a JOIN users u ON u.id=a.user_id WHERE a.step_role='Department Head' AND LOWER(TRIM(a.department))='operations' LIMIT 1").first<Row>();
  if(role==='Procurement Head'){
   const appointed=await env.DB.prepare("SELECT user_id FROM finance_approvers WHERE step_role='Department Head' AND LOWER(TRIM(department))='procurement' LIMIT 1").first<Row>();
   if(appointed?.user_id)return userById(env,appointed.user_id);
@@ -39,12 +40,14 @@ export async function principalFor(env:Context,role:string,department=''):Promis
 }
 function validPrincipal(user:Row|null,role:string,department=''):boolean{
  if(!eligible(user))return false;
+ if(role==='Operations Head')return ['Employee','Operations Head'].includes(String(user?.app_role))&&match(user?.department,'Operations');
  if(role==='Procurement Head')return user?.app_role==='Procurement Head'&&match(user?.department,'Procurement');
  if(role==='Department Head')return isOrdinaryDepartment(department)&&user?.app_role==='Employee'&&match(user?.department,department);
- return user?.app_role==='Employee'&&finance(user?.department);
+ return (user?.app_role==='Employee'||user?.app_role===role)&&finance(user?.department);
 }
 async function validDelegate(env:Context,user:Row|null,role:string,primaryId:string,department=''):Promise<boolean>{
  if(!eligible(user)||user?.id===primaryId)return false;
+ if(role==='Operations Head')return user?.app_role==='Operations Officer'&&match(user?.department,'Operations');
  if(role==='Procurement Head')return user?.app_role==='Procurement Officer'&&match(user?.department,'Procurement');
  if(role==='Department Head')return user?.app_role==='Employee'&&isOrdinaryDepartment(department)&&match(user?.department,department);
  if(user?.app_role!=='Employee'||!finance(user?.department))return false;
@@ -140,14 +143,14 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
   }
   const describe=(role:string,department:string)=>role==='Department Head'
    ?`Submit requisitions for ${department} only`
-   :role==='Procurement Head'?'Approve the assigned Procurement Head requisition step'
+   :role==='Operations Head'?'Submit Operations requisitions for the appointed Head; no approval power':role==='Procurement Head'?'Approve the assigned Procurement Head requisition step'
    :role==='Finance Officer'?'Finance Officer requisition review, invoice matching and payment below the Finance Head threshold'
    :'Finance Head sign-off and high-value payment at or above the threshold';
   const result=accounts.map(account=>{
    const usable=account.status==='approved'&&!account.access_revoked;
    const base=account.role==='admin'?'Admin':account.role==='guest'?'Supplier':
      account.app_role==='Procurement Head'?'Procurement Head':
-     account.app_role==='Procurement Officer'?'Procurement Officer':'Employee';
+     account.app_role==='Procurement Officer'?'Procurement Officer':account.app_role==='Operations Officer'?'Operations Officer':'Employee';
    const roles:Row[]=[{role:base,source:'Account role',department:account.department??'',startsOn:null,endsOn:null,
      capability:'Permanent account role; detailed rights come from the Access Control matrix.'}];
    if(usable&&account.role==='employee'){
@@ -182,10 +185,15 @@ export async function handleDelegationRoutes(request:Request,env:Context,user:De
   for(const role of DELEGABLE_STEPS)if(role!=='Department Head'&&await actingDelegation(env,user,role))activeRoles.push(role);
   const departmentAppointments=(await env.DB.prepare(`SELECT DISTINCT department FROM finance_approvers WHERE step_role='Department Head' ORDER BY department`).all<Row>()).results
     .map(row=>String(row.department)).filter(isOrdinaryDepartment);
+  // Include Human Resources in Admin's delegation selector even when its
+  // Head has not yet been formally appointed. A missing appointment remains
+  // ineligible; the Worker will never create a delegation for a null principal.
+  if(admin&&!departmentAppointments.some(name=>match(name,'Human Resources')))
+    departmentAppointments.push('Human Resources');
   const activeDepartments:string[]=[];
-  for(const department of departmentAppointments)if(await actingDelegation(env,user,'Department Head',department))activeDepartments.push(department);
+  for(const department of departmentAppointments.filter(dep=>!match(dep,'Operations')))if(await actingDelegation(env,user,'Department Head',department))activeDepartments.push(department);
   const principalRecords=[...await Promise.all(DELEGABLE_STEPS.filter(role=>role!=='Department Head').map(async role=>({role,department:'',user:await principalFor(env,role)}))),
-    ...await Promise.all(departmentAppointments.map(async department=>({role:'Department Head',department,user:await principalFor(env,'Department Head',department)})))];
+    ...await Promise.all(departmentAppointments.filter(dep=>!match(dep,'Operations')).map(async department=>({role:'Department Head',department,user:await principalFor(env,'Department Head',department)})))];
   const principals=admin?principalRecords:principalRecords.filter(x=>x.user?.id===user.id);
   const canRequest=admin||principals.length>0;
   const staff=canRequest?(await env.DB.prepare("SELECT id,name,role,app_role,department,status,access_revoked FROM users WHERE status='approved' AND access_revoked=0 AND role='employee' ORDER BY name").all<Row>()).results:[];

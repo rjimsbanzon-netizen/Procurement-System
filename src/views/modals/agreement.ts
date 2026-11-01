@@ -26,7 +26,7 @@ export function renderFinalizeAgreementModal() {
                             <input type="number" id="agreement-unit-price" min="0" step="0.01" value="${bid.unitPrice}" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Agreed Quantity</label>
+                            <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Agreed Quantity (${need.unit || 'units'})</label>
                             <input type="number" id="agreement-quantity" min="1" value="${need.targetQty}" required class="w-full text-xs p-2.5 border border-slate-300 rounded-lg">
                         </div>
                     </div>
