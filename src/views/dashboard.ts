@@ -9,7 +9,7 @@ import { renderPRStatusBadge } from './requisitions';
 import { formatCompactPeso, formatPeso } from '../domain/currency';
 
 function compactMoneyHtml(amount) {
-    return `<span title="${formatPeso(amount)}">${formatCompactPeso(amount)}</span>`;
+    return `<span class="money-tooltip" data-tooltip="${formatPeso(amount)}" aria-label="${formatCompactPeso(amount)}; hover for exact amount">${formatCompactPeso(amount)}</span>`;
 }
 
 // Migrated from enterprise.html. Business rules / markup preserved.

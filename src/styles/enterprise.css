@@ -35,6 +35,39 @@
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #bcb3a3; border-radius: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #908675; }
         .star-rating i { cursor: pointer; transition: color 0.15s ease-in-out; }
+        .money-tooltip {
+            position: relative;
+            display: inline-block;
+            cursor: default;
+        }
+        .money-tooltip::after {
+            position: absolute;
+            z-index: 50;
+            bottom: calc(100% + 0.6rem);
+            left: 50%;
+            padding: 0.45rem 0.7rem;
+            border: 1px solid rgba(255, 255, 255, .12);
+            border-radius: .5rem;
+            background: #222d28;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, .2);
+            color: #fffdf8;
+            content: attr(data-tooltip);
+            font-size: .75rem;
+            font-weight: 600;
+            line-height: 1.25rem;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            visibility: hidden;
+            transform: translate(-50%, .25rem);
+            transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+        }
+        .money-tooltip:hover::after,
+        .money-tooltip:focus-visible::after {
+            opacity: 1;
+            visibility: visible;
+            transform: translate(-50%, 0);
+        }
         .enterprise-auth {
             background: var(--forest);
             background-image: linear-gradient(90deg, transparent 49.9%, rgba(255,255,255,.035) 50%, transparent 50.1%);

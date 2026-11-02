@@ -10,7 +10,8 @@ import { MetricCard, ScreenPanel, StatusPill, mainButton, peso, secondaryButton 
 
 function startNewPR() { ui.currentModal = 'create_pr'; renderApp(); }
 function compactMoney(amount: number) {
-  return <span title={peso(amount)}>{formatCompactPeso(amount)}</span>;
+  const compact = formatCompactPeso(amount);
+  return <span className="money-tooltip" data-tooltip={peso(amount)} aria-label={`${compact}; hover for exact amount`}>{compact}</span>;
 }
 function Go({ tab, children }: { tab: string; children: React.ReactNode }) {
   return canAccessTab(tab) ? <button type="button" className={secondaryButton} onClick={() => navigateTo(tab)}>{children}</button> : null;
