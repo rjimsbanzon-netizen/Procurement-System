@@ -10,6 +10,10 @@ type Env = { DB: D1Database };
 const same = (a:unknown,b:unknown) => String(a??'').trim().toLowerCase()===String(b??'').trim().toLowerCase();
 const clean = (x:unknown,max=1000) => typeof x==='string'?x.trim().slice(0,max):'';
 const n = (x:unknown) => Number.isFinite(Number(x))?Number(x):0;
+const ratingScore = (rating:Rec) => {
+  const scores=[rating.qualityScore,rating.deliveryScore,rating.pricingScore].map(n);
+  return scores.every(score=>score>=1&&score<=5)?scores.reduce((sum,score)=>sum+score,0)/scores.length:n(rating.rating);
+};
 const json = (payload:unknown,status=200,cors:HeadersInit={}) => new Response(JSON.stringify(payload),{status,headers:{'Content-Type':'application/json',...cors}});
 const isManager=(u:User) => u.role==='admin'||['Procurement Head','Procurement Officer'].includes(u.app_role);
 const isStaff=(u:User) => u.role==='admin'||u.role==='employee';
@@ -75,7 +79,8 @@ async function report(env:Env,user:User,data:Data,allDepartments:boolean){
   for(const rating of data.ratings){
     const key=String(rating.supplierId||'');
     const v=bySupplier.get(key);
-    if(v&&n(rating.rating)>=1&&n(rating.rating)<=5){v.ratingCount++;v.ratingSum+=n(rating.rating);}
+    const score=ratingScore(rating);
+    if(v&&score>=1&&score<=5){v.ratingCount++;v.ratingSum+=score;}
   }
   const supplierPerformance=[...bySupplier.values()].map(({ratingSum,...v})=>({...v,
     averageRating:v.ratingCount?round2(ratingSum/v.ratingCount):null,

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { openAddSupplierModal, openRateSupplierModal, viewSupplierRatingsModal } from '../actions/orderActions';
 import { hasPermission } from '../domain/permissions';
-import { getSupplierRatingStats, isOrderFullyVerified } from '../domain/procurement';
+import { getRatingAverage, getSupplierRatingStats, isOrderFullyVerified } from '../domain/procurement';
 import { DB } from '../store/state';
 import { emptyPanel } from './shared/feedback';
 
@@ -55,7 +55,7 @@ export function renderSuppliersView() {
                                     <div class="mt-4 p-2.5 bg-slate-50 rounded-lg border border-slate-100 text-xs">
                                         <div class="font-semibold text-slate-700 flex justify-between">
                                             <span>${supplierRatings[0].evaluatorName}</span>
-                                            <span class="text-amber-500"><i class="fa-solid fa-star"></i> ${supplierRatings[0].rating}/5</span>
+                                            <span class="text-amber-500"><i class="fa-solid fa-star"></i> ${getRatingAverage(supplierRatings[0]).toFixed(1)}/5</span>
                                         </div>
                                         <p class="text-slate-500 italic mt-1 truncate">"${supplierRatings[0].feedback}"</p>
                                     </div>
@@ -98,10 +98,11 @@ export function renderSuppliersView() {
 export function renderStarRatingHTML(score) {
     let html = '';
     const numeric = parseFloat(score) || 0;
+    const displayScore = Math.round(Math.max(0, Math.min(5, numeric)) * 2) / 2;
     for (let i = 1; i <= 5; i++) {
-        if (i <= Math.floor(numeric)) {
+        if (i <= Math.floor(displayScore)) {
             html += `<i class="fa-solid fa-star text-amber-400 text-xs"></i>`;
-        } else if (i - 0.5 <= numeric) {
+        } else if (i - 0.5 <= displayScore) {
             html += `<i class="fa-solid fa-star-half-stroke text-amber-400 text-xs"></i>`;
         } else {
             html += `<i class="fa-regular fa-star text-slate-300 text-xs"></i>`;

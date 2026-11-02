@@ -57,9 +57,17 @@ export function getSupplierRatingStats(supplierId) {
     const supplierRatings = DB.ratings.filter(r => r.supplierId === supplierId);
     if (supplierRatings.length === 0) return { avg: 0, count: 0 };
 
-    const sum = supplierRatings.reduce((acc, curr) => acc + curr.rating, 0);
+    const sum = supplierRatings.reduce((acc, curr) => acc + getRatingAverage(curr), 0);
     const avg = (sum / supplierRatings.length).toFixed(1);
     return { avg: parseFloat(avg), count: supplierRatings.length };
+}
+
+export function getRatingAverage(rating) {
+    const scores = [rating.qualityScore, rating.deliveryScore, rating.pricingScore].map(Number);
+    if (scores.every(score => Number.isFinite(score) && score >= 1 && score <= 5)) {
+        return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    }
+    return Number(rating.rating) || 0;
 }
 
 

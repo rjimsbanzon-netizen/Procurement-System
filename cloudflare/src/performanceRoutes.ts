@@ -7,6 +7,10 @@ type User = {id:string; role:string; app_role:string; company_name:string};
 const arr = (v:unknown):Row[] => Array.isArray(v)?v:[];
 const same = (a:unknown,b:unknown) => String(a??'').trim().toLowerCase()===String(b??'').trim().toLowerCase();
 const num = (v:unknown) => Number.isFinite(Number(v))?Number(v):0;
+const ratingScore = (r:Row) => {
+  const scores=[r.qualityScore,r.deliveryScore,r.pricingScore].map(num);
+  return scores.every(score=>score>=1&&score<=5)?scores.reduce((sum,score)=>sum+score,0)/scores.length:num(r.rating);
+};
 const money = (v:number) => Math.round(v*100)/100;
 const date = (v:unknown) => {
   const text=String(v||'').slice(0,10);
@@ -41,7 +45,7 @@ export async function handlePerformanceRoutes(req:Request,env:Env,user:User,cors
     const onTime=dated.filter(d=>String(date(d.actualDate))<=String(date(d.expectedDate))).length;
     const rejected=inspected.filter(d=>/non-compliant|rejected|damaged|issue flagged/i.test(String(d.complianceStatus||''))).length;
     const verified=inspected.filter(d=>d.complianceStatus==='Completed - Verified').length;
-    const matchingRatings=ratings.filter(r=>(s.id&&r.supplierId===s.id)||same(r.supplierName,s.name)).filter(r=>num(r.rating)>=1&&num(r.rating)<=5);
+    const matchingRatings=ratings.filter(r=>(s.id&&r.supplierId===s.id)||same(r.supplierName,s.name)).filter(r=>ratingScore(r)>=1&&ratingScore(r)<=5);
     const prices=supplierOrders.flatMap(po=>{
       const qty=num(po.quantity),cost=num(po.totalCost),at=date(po.poDate);
       return qty>0&&cost>=0&&at?[{id:String(po.id),date:at,item:String(po.itemTitle||'Unspecified item'),price:money(cost/qty),source:'Awarded PO'}]:[];
@@ -55,7 +59,7 @@ export async function handlePerformanceRoutes(req:Request,env:Env,user:User,cors
       datedCount:dated.length,onTimeCount:onTime,
       onTimeRate:dated.length?money(onTime/dated.length*100):null,
       rejectionRate:inspected.length?money(rejected/inspected.length*100):null,
-      avgRating:matchingRatings.length?money(matchingRatings.reduce((sum,r)=>sum+num(r.rating),0)/matchingRatings.length):null,
+      avgRating:matchingRatings.length?money(matchingRatings.reduce((sum,r)=>sum+ratingScore(r),0)/matchingRatings.length):null,
       ratingCount:matchingRatings.length,
       priceHistory:[...prices,...quotes].sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id)).slice(-500)};
   }).filter(r=>supplier||r.orderCount||r.priceHistory.length).sort((a,b)=>b.orderCount-a.orderCount||a.name.localeCompare(b.name));

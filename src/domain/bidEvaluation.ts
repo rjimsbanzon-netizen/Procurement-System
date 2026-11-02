@@ -1,4 +1,5 @@
 import type { ProcurementRecord, ProcurementState } from '../types/procurement';
+import { getRatingAverage } from './procurement';
 
 /** Keep the existing 100-point evaluation policy. */
 export const BID_EVALUATION_WEIGHTS = {
@@ -143,12 +144,12 @@ export function scoreBidsForNeed(needId: string, state: ProcurementState): BidSc
     const review = asReview(bid.evaluation);
     const verification = reviewState(review);
     const supplierRatings = state.ratings.filter(rating =>
-      rating.supplierId === bid.supplierId && Number.isFinite(Number(rating.rating)) &&
-      Number(rating.rating) >= 1 && Number(rating.rating) <= 5
+      rating.supplierId === bid.supplierId && getRatingAverage(rating) >= 1 &&
+      getRatingAverage(rating) <= 5
     );
     const performanceCount = supplierRatings.length;
     const performanceAverage = performanceCount
-      ? supplierRatings.reduce((sum, rating) => sum + Number(rating.rating), 0) / performanceCount
+      ? supplierRatings.reduce((sum, rating) => sum + getRatingAverage(rating), 0) / performanceCount
       : null;
     const notes: string[] = [];
     if (maxBudget > 0 && Number(bid.totalCost) > maxBudget) notes.push('Over approved budget cap');

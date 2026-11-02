@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { DB } from '../store/state';
 import { useSuppliers } from '../hooks/useProcurementData';
 import { hasPermission } from '../domain/permissions';
-import { getSupplierRatingStats, isOrderFullyVerified } from '../domain/procurement';
+import { getRatingAverage, getSupplierRatingStats, isOrderFullyVerified } from '../domain/procurement';
 import { openAddSupplierModal, openRateSupplierModal, viewSupplierRatingsModal } from '../actions/orderActions';
 import { EmptyState } from '../components/FeedbackState';
 import { ScreenPanel, mainButton, secondaryButton, fieldClass } from '../components/CoreScreenUI';
@@ -37,7 +37,7 @@ export default function SuppliersPage() {
             <div className="flex items-start justify-between gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#f8eee9] text-[#a64f32]" aria-hidden="true"><i className="fa-solid fa-building"/></span><div className="text-right"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{supplier.category || 'Supplier'}</span><p className="mt-2 text-sm font-bold text-amber-700" aria-label={`${stats.avg} out of 5 stars`}>★ {stats.avg.toFixed(1)} <span className="font-normal text-slate-500">({stats.count} reviews)</span></p></div></div>
             <h3 className="mt-3 break-words text-base font-bold text-slate-900">{supplier.name}</h3>
             <div className="mt-2 space-y-1 text-sm text-slate-600"><p className="break-words"><i className="fa-solid fa-user mr-2 text-slate-400" aria-hidden="true"/>{supplier.contact || 'No contact specified'}</p><p className="break-all"><i className="fa-solid fa-envelope mr-2 text-slate-400" aria-hidden="true"/>{supplier.email || 'No email specified'}</p><p><i className="fa-solid fa-phone mr-2 text-slate-400" aria-hidden="true"/>{supplier.phone || 'No phone specified'}</p></div>
-            <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600">{latestReview ? <><div className="flex justify-between gap-2 font-semibold"><span>{latestReview.evaluatorName || 'Evaluator'}</span><span>★ {latestReview.rating}/5</span></div><p className="mt-1 break-words">{latestReview.feedback || 'No comments'}</p></> : <p className="text-center italic text-slate-400">No ratings recorded yet.</p>}</div>
+            <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600">{latestReview ? <><div className="flex justify-between gap-2 font-semibold"><span>{latestReview.evaluatorName || 'Evaluator'}</span><span>★ {getRatingAverage(latestReview).toFixed(1)}/5</span></div><p className="mt-1 break-words">{latestReview.feedback || 'No comments'}</p></> : <p className="text-center italic text-slate-400">No ratings recorded yet.</p>}</div>
           </div>
           <footer className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3"><button type="button" className={secondaryButton} onClick={() => viewSupplierRatingsModal(supplier.id)}><i className="fa-solid fa-comments" aria-hidden="true"/> {stats.count} Reviews</button>{canRate && <div className="flex flex-wrap gap-1.5">{paidOrders.length ? paidOrders.map(payment => <button type="button" key={payment.id} className={mainButton} onClick={() => openRateSupplierModal(supplier.id, payment.poId)}>Rate {payment.poId}</button>) : <span className="text-xs text-slate-500">Rate after completed, paid orders</span>}</div>}</footer>
         </article>;

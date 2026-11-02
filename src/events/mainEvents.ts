@@ -114,24 +114,31 @@ export function attachMainEvents() {
         });
     }
 
-    // Star Rating Picker
+    // Keep the displayed overall rating in sync with the score average.
     const starPicker = document.getElementById('star-picker');
     if (starPicker) {
-        const stars = starPicker.querySelectorAll('i');
+        const stars = starPicker.querySelectorAll('i[data-star]');
         const ratingInput = document.getElementById('rating-value');
-        stars.forEach((star, idx) => {
-            star.addEventListener('click', () => {
-                const score = idx + 1;
-                ratingInput.value = score;
-                stars.forEach((s, i) => {
-                    if (i < score) {
-                        s.className = 'fa-solid fa-star text-amber-400';
-                    } else {
-                        s.className = 'fa-regular fa-star text-slate-300';
-                    }
-                });
+        const averageLabel = document.getElementById('rating-average');
+        const scoreInputs = ['score-quality', 'score-delivery', 'score-pricing']
+            .map(id => document.getElementById(id));
+        const updateRatingAverage = () => {
+            if (!ratingInput || scoreInputs.some(input => !input)) return;
+            const scores = scoreInputs.map(input => Number(input.value));
+            const average = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+            const displayScore = Math.round(average * 2) / 2;
+            ratingInput.value = String(average);
+            if (averageLabel) averageLabel.textContent = `${average.toFixed(1)}/5`;
+            stars.forEach((star, index) => {
+                star.className = displayScore >= index + 1
+                    ? 'fa-solid fa-star text-amber-400'
+                    : displayScore >= index + 0.5
+                        ? 'fa-solid fa-star-half-stroke text-amber-400'
+                        : 'fa-regular fa-star text-slate-300';
             });
-        });
+        };
+        scoreInputs.forEach(input => input?.addEventListener('change', updateRatingAverage));
+        updateRatingAverage();
     }
 
     document.querySelectorAll('form[data-amendment-response-form]').forEach(form => {
@@ -325,10 +332,10 @@ export function attachMainEvents() {
     if (rateSupplierForm) {
         rateSupplierForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            const ratingVal = parseInt(document.getElementById('rating-value').value);
             const qScore = parseInt(document.getElementById('score-quality').value);
             const dScore = parseInt(document.getElementById('score-delivery').value);
             const pScore = parseInt(document.getElementById('score-pricing').value);
+            const ratingVal = (qScore + dScore + pScore) / 3;
             const feedback = document.getElementById('rating-feedback').value.trim();
             const supplierId = typeof ui.selectedRecord === 'object' ? ui.selectedRecord.supplierId : null;
             const poId = typeof ui.selectedRecord === 'object' ? ui.selectedRecord.poId : null;
@@ -337,7 +344,7 @@ export function attachMainEvents() {
 
             if (!hasPermission('rate_supplier') || !payment || payment.status !== 'Paid' || !order ||
                 !isOrderFullyVerified(poId) || DB.ratings.some(item => item.poId === poId) ||
-                !Number.isInteger(ratingVal) || ratingVal < 1 || ratingVal > 5 ||
+                !Number.isFinite(ratingVal) || ratingVal < 1 || ratingVal > 5 ||
                 !Number.isInteger(qScore) || qScore < 1 || qScore > 5 ||
                 !Number.isInteger(dScore) || dScore < 1 || dScore > 5 ||
                 !Number.isInteger(pScore) || pScore < 1 || pScore > 5 || !feedback) {

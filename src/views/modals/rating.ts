@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { closeModal } from '../../actions/modalActions';
+import { getRatingAverage } from '../../domain/procurement';
 import { DB, ui } from '../../store/state';
 import { renderStarRatingHTML } from '../suppliers';
 
@@ -24,12 +25,11 @@ export function renderRateSupplierModal() {
                 <form id="rate-supplier-form" class="space-y-4">
                     <div>
                         <label class="block text-xs font-semibold uppercase text-slate-600 mb-1">Overall Rating (1 to 5 Stars)</label>
-                        <div class="flex items-center space-x-2 text-2xl text-amber-400 star-rating" id="star-picker">
-                            <i class="fa-regular fa-star" data-star="1"></i>
-                            <i class="fa-regular fa-star" data-star="2"></i>
-                            <i class="fa-regular fa-star" data-star="3"></i>
-                            <i class="fa-regular fa-star" data-star="4"></i>
-                            <i class="fa-regular fa-star" data-star="5"></i>
+                        <div class="flex items-center space-x-2 text-2xl star-rating" id="star-picker" aria-label="Overall rating">
+                            ${[1, 2, 3, 4, 5].map(score => `
+                                <i class="fa-${score === 5 ? 'solid' : 'regular'} fa-star ${score === 5 ? 'text-amber-400' : 'text-slate-300'}" data-star="${score}" aria-hidden="true"></i>
+                            `).join('')}
+                            <span id="rating-average" class="ml-1 text-sm font-semibold text-slate-600">5.0/5</span>
                         </div>
                         <input type="hidden" id="rating-value" value="5">
                     </div>
@@ -52,6 +52,7 @@ export function renderRateSupplierModal() {
                                 <option value="4">4 - Minor Delay</option>
                                 <option value="3">3 - Delayed</option>
                                 <option value="2">2 - Late</option>
+                                <option value="1">1 - Very Late</option>
                             </select>
                         </div>
                         <div>
@@ -60,6 +61,8 @@ export function renderRateSupplierModal() {
                                 <option value="5">5 - Competitive</option>
                                 <option value="4">4 - Fair</option>
                                 <option value="3">3 - High</option>
+                                <option value="2">2 - Very High</option>
+                                <option value="1">1 - Excessive</option>
                             </select>
                         </div>
                     </div>
@@ -108,7 +111,7 @@ export function renderViewRatingsModal() {
                                     <div class="text-xs text-sky-600 font-medium">${r.evaluatorRole} &bull; ${r.createdAt}</div>
                                 </div>
                                 <div class="text-amber-400 text-sm">
-                                    ${renderStarRatingHTML(r.rating)}
+                                    ${renderStarRatingHTML(getRatingAverage(r))}
                                 </div>
                             </div>
                             <p class="text-xs text-slate-700 leading-relaxed">${r.feedback}</p>
