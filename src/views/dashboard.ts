@@ -6,6 +6,11 @@ import { hasPermission } from '../domain/permissions';
 import { getCurrentUserRequisitions, getSupplierRatingStats } from '../domain/procurement';
 import { DB } from '../store/state';
 import { renderPRStatusBadge } from './requisitions';
+import { formatCompactPeso, formatPeso } from '../domain/currency';
+
+function compactMoneyHtml(amount) {
+    return `<span title="${formatPeso(amount)}">${formatCompactPeso(amount)}</span>`;
+}
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderDashboardView() {
@@ -78,7 +83,7 @@ export function renderDashboardView() {
                         <div>
                             <p class="text-xs font-semibold uppercase text-slate-500">Disbursements Received</p>
                             <p class="text-2xl font-bold text-sky-600 mt-1">
-                                ₱${DB.payments.filter(p => p.supplierName === mySupplier.name && p.status === 'Paid').reduce((a, b) => a + (b.paymentAmount || 0), 0).toLocaleString()}
+                                ${compactMoneyHtml(DB.payments.filter(p => p.supplierName === mySupplier.name && p.status === 'Paid').reduce((a, b) => a + (b.paymentAmount || 0), 0))}
                             </p>
                         </div>
                         <div class="w-10 h-10 rounded-lg bg-sky-100 text-sky-600 flex items-center justify-center text-lg">
@@ -208,7 +213,7 @@ export function renderDashboardView() {
                 ` : ''}
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                     <div>
                         <p class="text-xs font-semibold uppercase text-slate-500">Total PRs</p>
@@ -302,7 +307,7 @@ export function renderDashboardView() {
                 <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                     <div>
                         <p class="text-xs font-semibold uppercase text-slate-500">Completed Payments</p>
-                        <p class="text-xl font-bold text-emerald-600 mt-1">₱${totalPaidSum.toLocaleString()}</p>
+                        <p class="text-xl font-bold text-emerald-600 mt-1">${compactMoneyHtml(totalPaidSum)}</p>
                     </div>
                     <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-lg">
                         <i class="fa-solid fa-sack-dollar"></i>

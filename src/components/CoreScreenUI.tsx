@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
+import { formatPeso } from '../domain/currency';
 
 /** Shared presentational building blocks for the React procurement core screens. */
-export const peso = (amount: unknown) => `₱${Number(amount || 0).toLocaleString('en-PH', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+export const peso = formatPeso;
 
 export function StatusPill({ status }: { status: string }) {
   const label = String(status || 'Unknown');
@@ -16,7 +17,7 @@ export function StatusPill({ status }: { status: string }) {
   return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${color}`}>{label}</span>;
 }
 
-export function MetricCard({ label, value, icon, action }: { label: string; value: string | number; icon: string; action?: () => void }) {
+export function MetricCard({ label, value, icon, action }: { label: string; value: ReactNode; icon: string; action?: () => void }) {
   const content = <>
     <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div><div className="mt-2 text-2xl font-bold text-slate-900 break-words">{value}</div></div>
     <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#f8eee9] text-[#a64f32]" aria-hidden="true"><i className={`fa-solid ${icon}`} /></span>

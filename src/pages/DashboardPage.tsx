@@ -4,10 +4,14 @@ import { DB, ui } from '../store/state';
 import { renderApp, navigateTo } from '../core/renderBridge';
 import { canAccessTab, hasPermission } from '../domain/permissions';
 import { getSupplierRatingStats } from '../domain/procurement';
+import { formatCompactPeso } from '../domain/currency';
 import { EmptyState } from '../components/FeedbackState';
 import { MetricCard, ScreenPanel, StatusPill, mainButton, peso, secondaryButton } from '../components/CoreScreenUI';
 
 function startNewPR() { ui.currentModal = 'create_pr'; renderApp(); }
+function compactMoney(amount: number) {
+  return <span title={peso(amount)}>{formatCompactPeso(amount)}</span>;
+}
 function Go({ tab, children }: { tab: string; children: React.ReactNode }) {
   return canAccessTab(tab) ? <button type="button" className={secondaryButton} onClick={() => navigateTo(tab)}>{children}</button> : null;
 }
@@ -31,7 +35,7 @@ export default function DashboardPage() {
   const metrics = supplier ? [
     { label: 'Active Orders', value: myOrders.length, icon: 'fa-file-invoice-dollar', tab: 'orders' },
     { label: 'Completed Shipments', value: DB.deliveries.filter(d => myOrders.some(o => o.id === d.poId) && d.complianceStatus === 'Completed - Verified').length, icon: 'fa-circle-check', tab: 'delivery' },
-    { label: 'Disbursements Received', value: peso(DB.payments.filter(p => myOrders.some(o => o.id === p.poId) && p.status === 'Paid').reduce((sum, p) => sum + Number(p.paymentAmount || 0), 0)), icon: 'fa-sack-dollar', tab: 'payments' }
+    { label: 'Disbursements Received', value: compactMoney(DB.payments.filter(p => myOrders.some(o => o.id === p.poId) && p.status === 'Paid').reduce((sum, p) => sum + Number(p.paymentAmount || 0), 0)), icon: 'fa-sack-dollar', tab: 'payments' }
   ] : employee ? [
     { label: 'My Requests', value: myPRs.length, icon: 'fa-file-signature', tab: 'requisitions' },
     { label: 'Pending Review', value: myPRs.filter(r => r.status === 'Pending').length, icon: 'fa-clock', tab: 'requisitions' },
@@ -49,7 +53,7 @@ export default function DashboardPage() {
     { label: 'Pending Amendments', value: DB.amendments.filter(a => ['Pending Supplier Response', 'Supplier Responded'].includes(a.approvalStatus)).length, icon: 'fa-pen-to-square', tab: 'amendments' },
     { label: 'Payments Awaiting', value: DB.payments.filter(p => ['Pending', 'Processing'].includes(p.status)).length, icon: 'fa-hourglass-half', tab: 'payments' },
     { label: 'Payments On Hold', value: DB.payments.filter(p => p.status === 'On Hold').length, icon: 'fa-hand', tab: 'payments' },
-    { label: 'Completed Payments', value: peso(DB.payments.filter(p => p.status === 'Paid').reduce((sum, p) => sum + Number(p.paymentAmount || 0), 0)), icon: 'fa-sack-dollar', tab: 'payments' }
+    { label: 'Completed Payments', value: compactMoney(DB.payments.filter(p => p.status === 'Paid').reduce((sum, p) => sum + Number(p.paymentAmount || 0), 0)), icon: 'fa-sack-dollar', tab: 'payments' }
   ];
   return <div className="enterprise-dashboard space-y-5 pb-6">
     <section className="dashboard-hero flex flex-col justify-between gap-5 rounded-2xl bg-[#222d28] p-5 text-white shadow-lg sm:flex-row sm:items-center sm:p-7">
@@ -64,7 +68,7 @@ export default function DashboardPage() {
 
     {pendingMeetings > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4"><div><h3 className="font-bold text-amber-900">{pendingMeetings} pending proposal meeting invite{pendingMeetings > 1 ? 's' : ''}</h3><p className="text-xs text-amber-700">Review and respond to your invitations.</p></div><Go tab="proposal_meetings">Review invites</Go></div>}
 
-    <div className={`grid gap-3 sm:grid-cols-2 ${supplier ? 'lg:grid-cols-3' : employee ? 'lg:grid-cols-3 xl:grid-cols-6' : 'lg:grid-cols-3 xl:grid-cols-5'}`}>
+    <div className={`grid gap-3 sm:grid-cols-2 ${supplier ? 'lg:grid-cols-3' : employee ? 'lg:grid-cols-3 xl:grid-cols-6' : 'lg:grid-cols-4'}`}>
       {metrics.map(metric => <MetricCard key={metric.label} label={metric.label} value={metric.value} icon={metric.icon} action={canAccessTab(metric.tab) ? () => navigateTo(metric.tab) : undefined}/>)}
     </div>
 
