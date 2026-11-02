@@ -1,5 +1,0 @@
---- a/cloudflare/src/index.ts
-+++ b/cloudflare/src/index.ts
-@@
--const PASSWORD_ITERATIONS = 210_000;
-+const PASSWORD_ITERATIONS = 100_000;
