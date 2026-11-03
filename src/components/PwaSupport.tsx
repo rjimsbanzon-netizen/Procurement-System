@@ -12,6 +12,7 @@ let swReady=false;
 const seen=new Map<string,Set<string>>();
 const alertKey=(userId:string)=>`procureflow_mobile_alerts_${userId}`;
 const available=typeof window!=='undefined'&&'Notification' in window&&'serviceWorker' in navigator;
+const appBase = import.meta.env.BASE_URL;
 
 /** User-initiated desktop/mobile alerts while the app is open; not remote Web Push. */
 export function PwaSupport(){
@@ -27,9 +28,9 @@ export function PwaSupport(){
   return()=>{window.removeEventListener('beforeinstallprompt',ask);window.removeEventListener('appinstalled',done)};
  },[]);
  useEffect(()=>{
-  if(!available||swReady||!('serviceWorker' in navigator))return;
+  if(swReady||!('serviceWorker' in navigator))return;
   swReady=true;
-  navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(err=>{console.warn('PWA installation unavailable:',err);swReady=false});
+  navigator.serviceWorker.register(`${appBase}sw.js`,{scope:appBase}).catch(err=>{console.warn('PWA installation unavailable:',err);swReady=false});
  },[]);
  useEffect(()=>{
   const listener=(e:MessageEvent)=>{
@@ -53,7 +54,7 @@ export function PwaSupport(){
     if(!enabled||!available||Notification.permission!=='granted'||item.historical||isNotificationRead(item))continue;
     // Do not send historical record alerts on login; only newly detected items in the current session.
     void navigator.serviceWorker.ready.then(reg=>reg.showNotification(item.title,{
-      body:item.description,icon:'/pwa-192.png',tag:item.id,data:{tab:item.targetTab},
+      body:item.description,icon:`${appBase}pwa-192.png`,tag:item.id,data:{tab:item.targetTab},
     })).catch(()=>{});
    }
    if(current.size>1000)seen.set(account,new Set([...current].slice(-600)));

@@ -13,6 +13,7 @@ import { handleDelegationRoutes } from './delegationRoutes';
 import { handleContractRoutes } from './contractRoutes';
 import { handlePerformanceRoutes } from './performanceRoutes';
 import { handleAuditEvidenceRoutes, evidenceStatement, snapshotEvidence } from './auditEvidenceRoutes';
+import { validateSupplierSnapshotWrite } from './snapshotAuthorization';
 
 export interface Env {
   DB: D1Database;
@@ -58,7 +59,7 @@ const SESSION_DURATION_SECONDS = 12 * 60 * 60;
 function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers },
   });
 }
 
@@ -551,7 +552,7 @@ export default {
       }
 
       // Shared enterprise workspace snapshot, as in the original Worker.
-      // NOTE: original snapshot API has no per-record authorization on reads or writes.
+      // Legacy shared read API remains broad. Supplier writes are checked per record below.
       if (pathname === '/enterprise-state' && (request.method === 'GET' || request.method === 'PUT')) {
         if (request.method === 'GET') {
           const row = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1').first<{ data: string }>();
@@ -576,6 +577,8 @@ export default {
         if (financeError) return json({ error: financeError }, 409, cors);
         const sourcingError = validateSourcingSnapshotWrite(input, current ? JSON.parse(current.data) as Record<string, unknown> : {}, user);
         if (sourcingError) return json({ error: sourcingError }, 409, cors);
+        const supplierError = validateSupplierSnapshotWrite(input, current ? JSON.parse(current.data) as Record<string, unknown> : {}, user);
+        if (supplierError) return json({ error: supplierError }, 403, cors);
         const data = JSON.stringify(input);
         if (data.length > 1000000) return json({ error: 'Dataset too large' }, 413, cors);
         const previousState = current ? JSON.parse(current.data) as Record<string,unknown> : {};

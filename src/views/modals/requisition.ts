@@ -1,6 +1,5 @@
 import { measurementUnitOptionsHtml } from '../../domain/measurementUnits';
 // @ts-nocheck
-import { closeModal } from '../../actions/modalActions';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderCreatePRModal() {

@@ -1,6 +1,5 @@
-import { formatQuantity, displayUnit } from '../../domain/measurementUnits';
+import { displayUnit } from '../../domain/measurementUnits';
 // @ts-nocheck
-import { closeModal } from '../../actions/modalActions';
 import { getAvailableRequisitions } from '../../domain/procurement';
 import { ui } from '../../store/state';
 

@@ -1,6 +1,5 @@
 import { displayUnit } from '../../domain/measurementUnits';
 // @ts-nocheck
-import { closeModal } from '../../actions/modalActions';
 import { DB, ui } from '../../store/state';
 
 // Migrated from enterprise.html. Business rules / markup preserved.

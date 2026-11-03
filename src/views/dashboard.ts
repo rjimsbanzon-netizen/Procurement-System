@@ -304,12 +304,12 @@ export function renderDashboardView() {
                     </div>
                 </div>
 
-                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
+                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between gap-3 min-w-0">
+                    <div class="min-w-0 flex-1">
                         <p class="text-xs font-semibold uppercase text-slate-500">Completed Payments</p>
-                        <p class="text-xl font-bold text-emerald-600 mt-1">${compactMoneyHtml(totalPaidSum)}</p>
+                        <p class="text-[clamp(1rem,1.5vw,1.25rem)] leading-snug font-bold text-emerald-600 mt-1 break-words">${compactMoneyHtml(totalPaidSum)}</p>
                     </div>
-                    <div class="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-lg">
+                    <div class="w-10 h-10 shrink-0 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center text-lg">
                         <i class="fa-solid fa-sack-dollar"></i>
                     </div>
                 </div>
