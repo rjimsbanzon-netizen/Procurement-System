@@ -112,8 +112,8 @@ export const cloudApi = {
     return response.data;
   },
 
-  async putEnterpriseState(data: Record<string, unknown>): Promise<void> {
-    await request('/enterprise-state', { method: 'PUT', body: JSON.stringify({ data }) });
+  async putEnterpriseState(_data: Record<string, unknown>): Promise<void> {
+    throw new Error('Legacy full-workspace updates are disabled. Use the record-specific workspace changes API.');
   },
 
   async logout(): Promise<void> {

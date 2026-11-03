@@ -29,6 +29,13 @@ jobs:
         run: npm ci
       - name: Run regression tests
         run: npm test
+      - name: Type-check frontend
+        run: npx tsc --noEmit -p tsconfig.app.json
+      - name: Install Worker dependencies
+        run: npm ci --prefix cloudflare
+      - name: Type-check Worker and all imported routes
+        working-directory: cloudflare
+        run: npx tsc --noEmit --skipLibCheck --target es2022 --module esnext --moduleResolution bundler --types @cloudflare/workers-types src/index.ts
       - name: Build site
         run: npm run build
       - name: Configure Pages

@@ -5,6 +5,7 @@ import { CLOUD_API_BASE, CLOUD_RECORD_COLLECTIONS, CLOUD_TOKEN_KEY, cloudRequest
 import { showToast } from './toast';
 import { DB, setDB } from '../store/state';
 import { normalizeMatrix } from '../domain/accessMatrix';
+import {getWorkspaceChanges,confirmWorkspaceChanges,clearWorkspaceBaseline} from './workspaceSync';
 
 // Local persistence + serialized Cloudflare API sync.
 let cloudSaveQueue = Promise.resolve();
@@ -87,15 +88,22 @@ export class Storage {
         const token = CLOUD_API_BASE ? localStorage.getItem(CLOUD_TOKEN_KEY) : null;
         if (!token) return;
 
-        const data = Object.fromEntries(
+        const data = JSON.parse(JSON.stringify(Object.fromEntries(
             CLOUD_RECORD_COLLECTIONS.map(collection => [collection, state[collection]])
-        );
+        )));
         cloudSaveQueue = cloudSaveQueue.then(async () => {
-            await cloudRequest('/enterprise-state', {
-                method: 'PUT',
-                body: JSON.stringify({ data })
-            }, token);
-            cloudSaveError = null;
+            const changes = getWorkspaceChanges(data, token);
+            // Local audit messages are not authoritative. The Worker creates
+            // authenticated per-record audit evidence for actual business edits.
+            if (changes.length) {
+                // A UI action should not partially commit a bulk batch of records.
+                if (changes.length > 40) throw new Error('Bulk update exceeds 40 records. Split the operation or use the dedicated Admin Reset workflow.');
+                await cloudRequest('/enterprise-state/changes', {
+                    method: 'POST', body: JSON.stringify({ changes })
+                }, token);
+                confirmWorkspaceChanges(changes, token);
+                cloudSaveError = null;
+            }
         }).catch(error => {
             cloudSaveError = error;
             const reason = error instanceof Error ? error.message : String(error);
@@ -153,6 +161,7 @@ export class Storage {
         // reference numbers reused after an Admin clears the workspace.
         Object.keys(localStorage).filter(key => key.startsWith('procureflow_read_notifications_v1_'))
             .forEach(key => localStorage.removeItem(key));
+        clearWorkspaceBaseline();
         setDB(freshState);
         localStorage.setItem('eprocurement_db', JSON.stringify(freshState));
         location.reload();

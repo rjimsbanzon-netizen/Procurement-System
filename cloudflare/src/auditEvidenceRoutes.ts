@@ -19,6 +19,21 @@ export function evidenceStatement(env:Env,user:User,entityType:string,entityRef:
     VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),new Date().toISOString(),user.id,user.name,user.app_role||user.role,
     entityType.slice(0,80),entityRef.slice(0,160),action.slice(0,80),serial(before),serial(after));
 }
+/** Evidence is included in the same atomic D1 batch as a compare-and-swap update.
+ * On a stale write, the UPDATE matches zero rows and these INSERT ... SELECT
+ * statements also match zero rows, avoiding phantom audit events.
+ */
+export function conditionalChangeEvidence(env:Env,user:User,
+    changes:{collection:string;id:string;before:Row|null;after:Row|null}[], writtenData:string, writeMarker:string):D1PreparedStatement[] {
+  return changes.map(change=>env.DB.prepare(`INSERT INTO audit_evidence
+    (id,occurred_at,actor_id,actor_name,actor_role,entity_type,entity_ref,action,before_json,after_json)
+    SELECT ?,?,?,?,?,?,?,?,?,?
+    WHERE EXISTS(SELECT 1 FROM enterprise_state WHERE id=1 AND data=? AND updated_at=?)`).bind(
+      crypto.randomUUID(),new Date().toISOString(),user.id,user.name,user.app_role||user.role,
+      change.collection.slice(0,80),change.id.slice(0,160),
+      change.before===null?'Created':change.after===null?'Deleted':'Updated',
+      serial(change.before),serial(change.after),writtenData,writeMarker));
+}
 /** Bounded per-record audit entries, generated from the persisted data, not client auditLogs. */
 export function snapshotEvidence(env:Env,user:User,previous:Row,next:Row):D1PreparedStatement[]{
   const events:D1PreparedStatement[]=[];

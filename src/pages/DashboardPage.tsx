@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
 import { formatQuantity } from '../domain/measurementUnits';
+import { countUnresolvedDiscrepancies } from '../domain/deliveryIssueMetrics';
+import { CLOUD_API_BASE, cloudRequest } from '../services/cloud';
 import { useCurrentUser, useOrders, useRequisitions } from '../hooks/useProcurementData';
 import { DB, ui } from '../store/state';
 import { renderApp, navigateTo } from '../core/renderBridge';
@@ -22,6 +25,24 @@ export default function DashboardPage() {
   const user = useCurrentUser();
   const accessibleOrders = useOrders();
   const accessiblePRs = useRequisitions();
+  const [trackedDeliveryIssues, setTrackedDeliveryIssues] = useState<number | 'loading' | 'error'>('loading');
+  // The tracker has its own D1 records. The local delivery inspection flag is
+  // not authoritative once an issue is opened and remains unresolved.
+  useEffect(() => {
+    if (!user || user.role === 'Supplier' || user.role === 'Employee' || !CLOUD_API_BASE) return;
+    let active = true;
+    setTrackedDeliveryIssues('loading');
+    void (async () => {
+      try {
+        const response = await cloudRequest('/operations/discrepancies') as { discrepancies?: { status?: string | null }[] };
+        if (!Array.isArray(response.discrepancies)) throw new Error('Invalid discrepancy tracker response.');
+        if (active) setTrackedDeliveryIssues(countUnresolvedDiscrepancies(response.discrepancies));
+      } catch {
+        if (active) setTrackedDeliveryIssues('error');
+      }
+    })();
+    return () => { active = false; };
+  }, [user?.id, user?.role]);
   if (!user) return null;
   const supplier = user.role === 'Supplier';
   const employee = user.role === 'Employee';
@@ -50,7 +71,11 @@ export default function DashboardPage() {
     { label: 'Orders in Process', value: DB.orders.filter(o => o.status === 'Issued').length, icon: 'fa-truck-fast', tab: 'orders' },
     { label: 'Upcoming Deliveries', value: DB.deliveries.filter(d => ['Pending', 'Partial'].includes(d.deliveryStatus)).length, icon: 'fa-box-open', tab: 'delivery' },
     { label: 'Verified Completed', value: DB.deliveries.filter(d => d.complianceStatus === 'Completed - Verified').length, icon: 'fa-circle-check', tab: 'delivery' },
-    { label: 'Delivery Issues', value: DB.deliveries.filter(d => /Issue|Non-Compliant/.test(d.complianceStatus || '')).length, icon: 'fa-triangle-exclamation', tab: 'delivery_discrepancies' },
+    { label: 'Active Delivery Issues', value: !CLOUD_API_BASE
+      ? DB.deliveries.filter(d => /Issue|Non-Compliant/.test(d.complianceStatus || '')).length
+      : trackedDeliveryIssues === 'loading' ? '…'
+      : trackedDeliveryIssues === 'error' ? <span title="Could not load the discrepancy tracker. Reopen Dashboard to retry.">—</span>
+      : trackedDeliveryIssues, icon: 'fa-triangle-exclamation', tab: 'delivery_discrepancies' },
     { label: 'Pending Amendments', value: DB.amendments.filter(a => ['Pending Supplier Response', 'Supplier Responded'].includes(a.approvalStatus)).length, icon: 'fa-pen-to-square', tab: 'amendments' },
     { label: 'Payments Awaiting', value: DB.payments.filter(p => ['Pending', 'Processing'].includes(p.status)).length, icon: 'fa-hourglass-half', tab: 'payments' },
     { label: 'Payments On Hold', value: DB.payments.filter(p => p.status === 'On Hold').length, icon: 'fa-hand', tab: 'payments' },

@@ -7,6 +7,7 @@ import { showToast } from './toast';
 import { DB, setDB, ui } from '../store/state';
 import { normalizeMatrix } from '../domain/accessMatrix';
 import {clearActingResponsibilities,setActingResponsibilities} from '../domain/effectiveDelegation';
+import { setWorkspaceBaseline, clearWorkspaceBaseline } from './workspaceSync';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export const CLOUD_TOKEN_KEY = 'procurement_enterprise_token';
@@ -75,6 +76,7 @@ export function mapCloudUser(user, suppliers = []) {
 
 
 export function applyCloudState(data, user, users = [user], accessControl = null) {
+    setWorkspaceBaseline(data, localStorage.getItem(CLOUD_TOKEN_KEY));
     const state = Storage.empty();
     if (data !== null) {
         if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -137,6 +139,7 @@ export async function refreshActiveDelegationAccess() {
 export async function restoreCloudSession() {
     const token = localStorage.getItem(CLOUD_TOKEN_KEY);
     if (!token) {
+        clearWorkspaceBaseline();
         delegationRefreshSequence++;
         clearActingResponsibilities();
         localStorage.removeItem(CLOUD_TOKEN_KEY);
@@ -158,6 +161,7 @@ export async function restoreCloudSession() {
         await refreshActiveDelegationAccess();
         renderApp();
     } catch (error) {
+        clearWorkspaceBaseline();
         delegationRefreshSequence++;
         clearActingResponsibilities();
         localStorage.removeItem(CLOUD_TOKEN_KEY);
@@ -202,6 +206,7 @@ export async function signInToCloud(username, password) {
         applyCloudState(snapshot.data, user, users, accessControl);
         await refreshActiveDelegationAccess();
     } catch (error) {
+        clearWorkspaceBaseline();
         localStorage.removeItem(CLOUD_TOKEN_KEY);
         localStorage.removeItem(CLOUD_USERNAME_KEY);
         throw error;

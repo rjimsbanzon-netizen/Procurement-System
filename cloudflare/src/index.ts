@@ -12,8 +12,9 @@ import { handleOperationsRoutes } from './operationsRoutes';
 import { handleDelegationRoutes } from './delegationRoutes';
 import { handleContractRoutes } from './contractRoutes';
 import { handlePerformanceRoutes } from './performanceRoutes';
-import { handleAuditEvidenceRoutes, evidenceStatement, snapshotEvidence } from './auditEvidenceRoutes';
+import { handleAuditEvidenceRoutes, evidenceStatement, conditionalChangeEvidence } from './auditEvidenceRoutes';
 import { validateSupplierSnapshotWrite } from './snapshotAuthorization';
+import { applyWorkspaceChanges, authorizeWorkspaceChanges, validateWorkspaceLinks, projectWorkspace, type Change } from './workspaceChanges';
 
 export interface Env {
   DB: D1Database;
@@ -551,44 +552,73 @@ export default {
         return json({ ok: true, permissions: normalized }, 200, cors);
       }
 
-      // Shared enterprise workspace snapshot, as in the original Worker.
-      // Legacy shared read API remains broad. Supplier writes are checked per record below.
-      if (pathname === '/enterprise-state' && (request.method === 'GET' || request.method === 'PUT')) {
+      // Phase 2: record-specific writes with optimistic compare-and-swap.
+      // The single D1 JSON row remains for compatibility with existing finance/sourcing
+      // routes; each request changes only the referenced records, never the whole tab's state.
+      if (pathname === '/enterprise-state/changes' && request.method === 'POST') {
+        const body = (await request.json().catch(() => null)) as { changes?: Change[] } | null;
+        if (!body || !Array.isArray(body.changes)) return json({ error: 'Expected record changes.' }, 400, cors);
+        if (JSON.stringify(body).length > 750000) return json({ error: 'Too many changes.' }, 413, cors);
+        // All reads and writes are against the CURRENT canonical workspace, not
+        // the stale state of the browser that submitted the operation.
+        const current = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id=1').first<{data:string}>();
+        const previous = current ? JSON.parse(current.data) as Record<string, unknown> : {};
+        const result = applyWorkspaceChanges(previous, body.changes);
+        if (result.error) return json({ error: result.error }, result.error.startsWith('Conflict:') ? 409 : 400, cors);
+        const roleError = authorizeWorkspaceChanges(user, body.changes);
+        if (roleError) return json({ error: roleError }, 403, cors);
+        const next = result.next!;
+        // Keep the existing Activity Log UI useful across devices. The log event
+        // is produced by the authenticated Worker, not copied from a browser.
+        // The reviewable, per-record authority trail remains audit_evidence in D1.
+        const oldLogs = Array.isArray(previous.auditLogs) ? previous.auditLogs : [];
+        if (oldLogs.length < 1200) {
+          const timestamp = new Date().toISOString().replace('T',' ').slice(0,16);
+          const kinds = [...new Set(body.changes.map(change => change.collection))].join(', ');
+          next.auditLogs = [{
+            id: `log-${crypto.randomUUID()}`,timestamp,user:user.name,
+            role:user.app_role || user.role,action:'Cloud Records Updated',
+            details:`${body.changes.length} record(s) updated in ${kinds.slice(0,160)}.`
+          }, ...oldLogs];
+        }
+        const linksError = validateWorkspaceLinks(body.changes, previous, next, user);
+        if (linksError) return json({ error: linksError }, 409, cors);
+        // Reuse all the existing business workflow validations against the merged
+        // state, including Finance approval, supplier ownership and bid immutability.
+        const financeError = await validateFinanceSnapshotWrite(env, next, previous, user);
+        if (financeError) return json({ error: financeError }, 409, cors);
+        const sourcingError = validateSourcingSnapshotWrite(next, previous, user);
+        if (sourcingError) return json({ error: sourcingError }, 409, cors);
+        const supplierError = validateSupplierSnapshotWrite(next, previous, user);
+        if (supplierError) return json({ error: supplierError }, 403, cors);
+        const written = JSON.stringify(next);
+        if (written.length > 1000000) return json({ error: 'Workspace too large.' }, 413, cors);
+        // update + conditional audit evidence run in a single atomic D1 batch.
+        // A unique ISO-8601 fractional timestamp identifies this exact commit,
+        // so another session producing the same JSON cannot create phantom evidence.
+        const marker = new Date().toISOString().replace('Z', `${crypto.randomUUID().replace(/-/g,'').slice(0,6)}Z`);
+        const statements = [
+          env.DB.prepare(`INSERT INTO enterprise_state (id,data,updated_at) VALUES (1,?,?)
+            ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at
+            WHERE enterprise_state.data=?`).bind(written, marker, current?.data ?? ''),
+          ...conditionalChangeEvidence(env,user,body.changes,written,marker),
+        ];
+        const results = await env.DB.batch(statements);
+        if (results[0].meta.changes !== 1)
+          return json({ error: 'Another account saved changes at the same time. Refresh and retry.' }, 409, cors);
+        return json({ ok: true, changed: body.changes.length }, 200, cors);
+      }
+
+      if (pathname === '/enterprise-state') {
         if (request.method === 'GET') {
           const row = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1').first<{ data: string }>();
-          return json({ data: row ? JSON.parse(row.data) : null }, 200, cors);
+          const data = row ? JSON.parse(row.data) as Record<string, unknown> : null;
+          return json({ data: data ? projectWorkspace(data, user) : null }, 200, cors);
         }
-        const body = (await request.json()) as { data?: unknown };
-        if (!body || typeof body.data !== 'object' || !body.data || Array.isArray(body.data)) {
-          return json({ error: 'Invalid business dataset' }, 400, cors);
+        if (request.method === 'PUT') {
+          // A legacy client must not overwrite approvals or other users' edits.
+          return json({ error: 'Full workspace updates are retired. Refresh the application to use record-specific saves.' }, 428, cors);
         }
-        const allowed = ['stockNeeds','bids','proposalMeetings','requisitions','orders','deliveries','amendments','payments','suppliers','ratings','auditLogs'];
-        const input = body.data as Record<string, unknown>;
-        if (Object.keys(input).some(k => ![...allowed,'accessControl'].includes(k)) ||
-            allowed.some(k => !Array.isArray(input[k])) ||
-            (input.accessControl !== undefined && !Array.isArray(input.accessControl))) {
-          return json({ error: 'Only enterprise business record arrays are accepted' }, 400, cors);
-        }
-        // Block direct approval/payment status changes that bypass workflow verification.
-        const current = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id=1').first<{ data: string }>();
-        const financeError = await validateFinanceSnapshotWrite(
-          env, input, current ? JSON.parse(current.data) as Record<string, unknown> : {}, user
-        );
-        if (financeError) return json({ error: financeError }, 409, cors);
-        const sourcingError = validateSourcingSnapshotWrite(input, current ? JSON.parse(current.data) as Record<string, unknown> : {}, user);
-        if (sourcingError) return json({ error: sourcingError }, 409, cors);
-        const supplierError = validateSupplierSnapshotWrite(input, current ? JSON.parse(current.data) as Record<string, unknown> : {}, user);
-        if (supplierError) return json({ error: supplierError }, 403, cors);
-        const data = JSON.stringify(input);
-        if (data.length > 1000000) return json({ error: 'Dataset too large' }, 413, cors);
-        const previousState = current ? JSON.parse(current.data) as Record<string,unknown> : {};
-        // Atomic snapshot + server-generated before/after evidence. Client auditLogs are not authoritative.
-        const auditEntries = snapshotEvidence(env,user,previousState,input);
-        await env.DB.batch([
-          env.DB.prepare("INSERT INTO enterprise_state (id, data, updated_at) VALUES (1, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')").bind(data),
-          ...auditEntries
-        ]);
-        return json({ ok: true }, 200, cors);
       }
 
       if (pathname === '/users' && request.method === 'GET') {
