@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { CLOUD_API_BASE } from '../services/cloud';
 import { DB, ui } from '../store/state';
-import procureflowMark from '../procureflow-mark.png';
+import procureflowMark from '../procureflow-mark.webp';
 
 // Migrated from enterprise.html. Business rules / markup preserved.
 export function renderAuthScreen() {

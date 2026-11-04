@@ -15,6 +15,8 @@ import { handlePerformanceRoutes } from './performanceRoutes';
 import { handleAuditEvidenceRoutes, evidenceStatement, conditionalChangeEvidence } from './auditEvidenceRoutes';
 import { validateSupplierSnapshotWrite } from './snapshotAuthorization';
 import { applyWorkspaceChanges, authorizeWorkspaceChanges, validateWorkspaceLinks, projectWorkspace, type Change } from './workspaceChanges';
+import { verifyWorkspaceRecordIndex } from './workspaceRecordIndex';
+import { parseRecordPageConfig, visibleRecordPage, validateIndexedCount, validateIndexedPage } from './workspaceRecordPages';
 
 export interface Env {
   DB: D1Database;
@@ -194,6 +196,19 @@ async function authenticate(request: Request, env: Env): Promise<User | null> {
 
 function isAdmin(user: User): boolean {
   return user.role === 'admin';
+}
+
+/** Authoritative Finance read privilege uses D1 appointments, never a UI label. */
+async function isFinanceReader(env: Env, user: User): Promise<boolean> {
+  if (user.role !== 'employee' ||
+      !['finance & accounting', 'finance and accounting', 'finance'].includes(user.department.trim().toLowerCase()))
+    return false;
+  const appointment = await env.DB.prepare(`SELECT 1 AS authorized FROM finance_approvers
+    WHERE user_id=? AND (step_role='Finance Officer' OR
+      (step_role='Department Head' AND LOWER(TRIM(department)) IN
+       ('finance & accounting','finance and accounting','finance')))
+    LIMIT 1`).bind(user.id).first<{authorized:number}>();
+  return Boolean(appointment?.authorized);
 }
 
 function validAccount(input: {
@@ -484,6 +499,71 @@ export default {
       const operationsResponse = await handleOperationsRoutes(request, env, user, cors);
       if (operationsResponse) return operationsResponse;
 
+      // Phase 4: authenticated, read-only, bounded D1 record pages. The normal
+      // application snapshot remains unchanged until subsequent staged cutover.
+      if (pathname === '/workspace-records' && request.method === 'GET') {
+        const config = parseRecordPageConfig(new URL(request.url));
+        if ('error' in config) return json({error:config.error},400,cors);
+        const {collection,offset,limit} = config;
+        try {
+          // enterprise_state remains authoritative during this compatibility phase.
+          // Never trust an indexed payload without checking its original record.
+          const current = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id=1')
+            .first<{data:string}>();
+          const canonical = current ? JSON.parse(current.data) as Record<string,unknown> : {};
+          const count = await env.DB.prepare(
+            'SELECT COUNT(*) AS total FROM workspace_record_index WHERE collection=?'
+          ).bind(collection).first<{total:number}>();
+          const indexedTotal = Number(count?.total ?? 0);
+          const countDrift = validateIndexedCount(canonical,collection,indexedTotal);
+          if (countDrift) return json({error:countDrift},409,cors);
+          if (isAdmin(user)) {
+            const indexed = await env.DB.prepare(`SELECT record_id,payload
+              FROM workspace_record_index WHERE collection=? ORDER BY record_id LIMIT ? OFFSET ?`)
+              .bind(collection,limit,offset).all<{record_id:string;payload:string}>();
+            const rows = indexed.results ?? [];
+            const records = rows.map(row => JSON.parse(row.payload) as Record<string,unknown>);
+            const drift = validateIndexedPage(canonical,collection,records,rows);
+            if (drift) return json({error:drift},409,cors);
+            return json({collection,records,total:indexedTotal,offset,limit,
+              nextOffset:offset+records.length<indexedTotal?offset+records.length:null},200,cors);
+          }
+          // Compute effective visibility from the server-owned projection;
+          // a client-supplied role or filter can never broaden this scope.
+          const financeAppointed = await isFinanceReader(env,user);
+          const page = visibleRecordPage(canonical,user,{financeAppointed},config);
+          const ids = page.records.map(row => String(row.id));
+          const indexed = ids.length ?
+            await env.DB.prepare(`SELECT record_id,payload FROM workspace_record_index
+              WHERE collection=? AND record_id IN (${ids.map(()=>'?').join(',')})`)
+              .bind(collection,...ids).all<{record_id:string;payload:string}>() :
+            await env.DB.prepare('SELECT record_id,payload FROM workspace_record_index LIMIT 0')
+              .all<{record_id:string;payload:string}>();
+          const drift = validateIndexedPage(canonical,collection,page.records,indexed.results ?? []);
+          if (drift) return json({error:drift},409,cors);
+          return json({collection,records:page.records,total:page.total,offset,limit,
+            nextOffset:page.nextOffset},200,cors);
+        } catch (error) {
+          console.error('Read-only indexed workspace page unavailable',error);
+          return json({error:'Indexed workspace unavailable. Admin should verify migration 0021 and index integrity.'},503,cors);
+        }
+      }
+
+      // Non-destructive Phase 3 migration monitor. No record payloads exposed.
+      if (pathname === '/admin/workspace-record-integrity' && request.method === 'GET') {
+        if (!isAdmin(user)) return json({error:'Admin access required'},403,cors);
+        try {
+          const canonical = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id=1').first<{data:string}>();
+          const indexed = await env.DB.prepare('SELECT collection,record_id,payload FROM workspace_record_index')
+            .all<{collection:string;record_id:string;payload:string}>();
+          const report = verifyWorkspaceRecordIndex(canonical?.data ?? '{}', indexed.results ?? []);
+          return json(report, report.ok ? 200 : 409, cors);
+        } catch (error) {
+          console.error('Workspace read-model inspection failed', error);
+          return json({error:'Workspace record index unavailable. Apply migration 0021, then retry.'},503,cors);
+        }
+      }
+
       if (pathname === '/auth/me' && request.method === 'GET') {
         return json({ user }, 200, cors);
       }
@@ -600,11 +680,11 @@ export default {
         const statements = [
           env.DB.prepare(`INSERT INTO enterprise_state (id,data,updated_at) VALUES (1,?,?)
             ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at
-            WHERE enterprise_state.data=?`).bind(written, marker, current?.data ?? ''),
+            WHERE enterprise_state.data=? RETURNING id`).bind(written, marker, current?.data ?? ''),
           ...conditionalChangeEvidence(env,user,body.changes,written,marker),
         ];
         const results = await env.DB.batch(statements);
-        if (results[0].meta.changes !== 1)
+        if (results[0].results?.length !== 1)
           return json({ error: 'Another account saved changes at the same time. Refresh and retry.' }, 409, cors);
         return json({ ok: true, changed: body.changes.length }, 200, cors);
       }
@@ -613,7 +693,9 @@ export default {
         if (request.method === 'GET') {
           const row = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id = 1').first<{ data: string }>();
           const data = row ? JSON.parse(row.data) as Record<string, unknown> : null;
-          return json({ data: data ? projectWorkspace(data, user) : null }, 200, cors);
+          // Match Phase 4 indexed reads: finance access is verified in D1.
+          const financeAppointed = await isFinanceReader(env,user);
+          return json({ data: data ? projectWorkspace(data, user, {financeAppointed}) : null }, 200, cors);
         }
         if (request.method === 'PUT') {
           // A legacy client must not overwrite approvals or other users' edits.

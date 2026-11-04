@@ -35,9 +35,11 @@ jobs:
         run: npm ci --prefix cloudflare
       - name: Type-check Worker and all imported routes
         working-directory: cloudflare
-        run: npx tsc --noEmit --skipLibCheck --target es2022 --module esnext --moduleResolution bundler --types @cloudflare/workers-types src/index.ts
+        run: npx tsc --noEmit --skipLibCheck --target es2022 --module esnext --moduleResolution bundler --allowImportingTsExtensions --types @cloudflare/workers-types src/index.ts
       - name: Build site
         run: npm run build
+      - name: Verify built PWA assets and performance budget
+        run: npm run verify:release
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact

@@ -1,40 +1,5 @@
-import AccountPage from './pages/AccountPage';
-import DirectMessagesPage from './pages/DirectMessagesPage';
-import EmployeeProfilesPage from './pages/EmployeeProfilesPage';
-import SupplierMessagesPage from './pages/SupplierMessagesPage';
-import SupplierPerformancePage from './pages/SupplierPerformancePage';
 import {MobileQuickActions} from './components/MobileQuickActions';
-import GlobalSearchPage from './pages/GlobalSearchPage';
-import ApprovalDelegationPage from './pages/ApprovalDelegationPage';
-import ContractsPage from './pages/ContractsPage';
-import SupplierAccreditationPage from './pages/SupplierAccreditationPage';
-import NotificationsPage from './features/notifications/NotificationsPage';
-import TrackingPage from './features/tracking/TrackingPage';
-import DocumentsPage from './pages/DocumentsPage';
-import PdfDocumentsPage from './pages/PdfDocumentsPage';
-import ApprovalsPage from './pages/ApprovalsPage';
-import BudgetsPage from './pages/BudgetsPage';
-import InvoiceMatchingPage from './pages/InvoiceMatchingPage';
-import DashboardPage from './pages/DashboardPage';
-import BiddingPage from './pages/BiddingPage';
-import BiddingDeadlinesPage from './pages/BiddingDeadlinesPage';
-import BidComparisonPage from './pages/BidComparisonPage';
-import BidEvaluationPage from './pages/BidEvaluationPage';
-import ProposalMeetingsPage from './pages/ProposalMeetingsPage';
-import RequisitionsPage from './pages/RequisitionsPage';
-import OrdersPage from './pages/OrdersPage';
-import DeliveryPage from './pages/DeliveryPage';
-import AdvancedReportsPage from './pages/AdvancedReportsPage';
-import DeliveryDiscrepanciesPage from './pages/DeliveryDiscrepanciesPage';
-import InventoryIntegrationPage from './pages/InventoryIntegrationPage';
-import AmendmentsPage from './pages/AmendmentsPage';
-import PaymentsPage from './pages/PaymentsPage';
-import SuppliersPage from './pages/SuppliersPage';
-import AccessControlPage from './pages/AccessControlPage';
-import AuditPage from './pages/AuditPage';
-import StaffAssignmentsPage from './pages/StaffAssignmentsPage';
-import UsersPage from './pages/UsersPage';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { DB, ui, setDB } from './store/state';
 import { CLOUD_API_BASE, restoreCloudSession } from './services/cloud';
 import { Storage } from './services/storage';
@@ -48,6 +13,43 @@ import { ModalHost } from './components/ModalHost';
 import { AuthScreen } from './components/AuthScreen';
 import { ActionDialogHost } from './components/ActionDialogHost';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
+
+// Pages are loaded only when an authorized user opens their module.
+const AccountPage = lazy(() => import('./pages/AccountPage'));
+const DirectMessagesPage = lazy(() => import('./pages/DirectMessagesPage'));
+const EmployeeProfilesPage = lazy(() => import('./pages/EmployeeProfilesPage'));
+const SupplierMessagesPage = lazy(() => import('./pages/SupplierMessagesPage'));
+const SupplierPerformancePage = lazy(() => import('./pages/SupplierPerformancePage'));
+const GlobalSearchPage = lazy(() => import('./pages/GlobalSearchPage'));
+const ApprovalDelegationPage = lazy(() => import('./pages/ApprovalDelegationPage'));
+const ContractsPage = lazy(() => import('./pages/ContractsPage'));
+const SupplierAccreditationPage = lazy(() => import('./pages/SupplierAccreditationPage'));
+const NotificationsPage = lazy(() => import('./features/notifications/NotificationsPage'));
+const TrackingPage = lazy(() => import('./features/tracking/TrackingPage'));
+const DocumentsPage = lazy(() => import('./pages/DocumentsPage'));
+const PdfDocumentsPage = lazy(() => import('./pages/PdfDocumentsPage'));
+const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
+const BudgetsPage = lazy(() => import('./pages/BudgetsPage'));
+const InvoiceMatchingPage = lazy(() => import('./pages/InvoiceMatchingPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const BiddingPage = lazy(() => import('./pages/BiddingPage'));
+const BiddingDeadlinesPage = lazy(() => import('./pages/BiddingDeadlinesPage'));
+const BidComparisonPage = lazy(() => import('./pages/BidComparisonPage'));
+const BidEvaluationPage = lazy(() => import('./pages/BidEvaluationPage'));
+const ProposalMeetingsPage = lazy(() => import('./pages/ProposalMeetingsPage'));
+const RequisitionsPage = lazy(() => import('./pages/RequisitionsPage'));
+const OrdersPage = lazy(() => import('./pages/OrdersPage'));
+const DeliveryPage = lazy(() => import('./pages/DeliveryPage'));
+const AdvancedReportsPage = lazy(() => import('./pages/AdvancedReportsPage'));
+const DeliveryDiscrepanciesPage = lazy(() => import('./pages/DeliveryDiscrepanciesPage'));
+const InventoryIntegrationPage = lazy(() => import('./pages/InventoryIntegrationPage'));
+const AmendmentsPage = lazy(() => import('./pages/AmendmentsPage'));
+const PaymentsPage = lazy(() => import('./pages/PaymentsPage'));
+const SuppliersPage = lazy(() => import('./pages/SuppliersPage'));
+const AccessControlPage = lazy(() => import('./pages/AccessControlPage'));
+const AuditPage = lazy(() => import('./pages/AuditPage'));
+const StaffAssignmentsPage = lazy(() => import('./pages/StaffAssignmentsPage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
 
 function CurrentPage() {
   if (!canAccessTab(ui.currentTab)) {
@@ -153,7 +155,11 @@ export default function App() {
         <Sidebar isMobileOpen={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           <Header onOpenMenu={() => setMobileMenuOpen(true)} isMenuOpen={mobileMenuOpen} />
-          <main id="procureflow-content" className="enterprise-main flex-1 min-w-0 min-h-0 overflow-y-auto p-4 md:p-6 bg-slate-50 custom-scrollbar"><PageErrorBoundary key={ui.currentTab}><CurrentPage key={revision} /></PageErrorBoundary></main>
+          <main id="procureflow-content" className="enterprise-main flex-1 min-w-0 min-h-0 overflow-y-auto p-4 md:p-6 bg-slate-50 custom-scrollbar"><PageErrorBoundary key={ui.currentTab}>
+            <Suspense fallback={<section role="status" aria-live="polite" className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm"><span className="mr-2 inline-block h-3 w-3 animate-pulse rounded-full bg-[#a64f32]" aria-hidden="true" />Loading module…</section>}>
+              <CurrentPage key={revision} />
+            </Suspense>
+          </PageErrorBoundary></main>
         </div>
         <PageErrorBoundary title="The current dialog could not be displayed"><ModalHost key={revision} /></PageErrorBoundary>
         <MobileQuickActions isMenuOpen={mobileMenuOpen} onOpenMenu={() => setMobileMenuOpen(true)} />

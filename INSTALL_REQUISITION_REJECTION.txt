@@ -1,0 +1,51 @@
+ProcureFlow — Reject Purchase Requisition (post-Phase 6)
+=======================================================
+
+WHAT CHANGED
+- Purchase Requisitions register: authorized current approvers get a Reject button.
+- Rejection requires a reason (1–1000 characters). The Worker checks the role and current step again.
+- High-value Finance Head rejection uses the distinct Finance Head approval route.
+- Rejected PR details show the recorded rejection reason, including for the requester.
+- Local/demo mode also requires a reason and retains it on the requisition and in its local audit log.
+- 2 HTTP tests added for ordinary and Finance Head rejection, unauthorized actors and history.
+
+LIMITS
+- Cloud rejection from the register is available once the requisition has ENTERED the multi-level approval workflow. Draft/unsubmitted requests still require the separate submission step.
+- Rejection is a final decision in the current workflow; it does not implement revision and resubmission of the same PR.
+- Existing approvals and payment logic are not bypassed; no existing business data is changed during installation.
+
+INSTALLATION
+1. Back up your Git working tree before replacing any files.
+2. Extract this ZIP at the root of your current Procurement-System project (after Phases 1–6).
+   Keep the relative paths under src/, cloudflare/, tests/.
+3. Run in PowerShell from the repository root:
+       npm ci
+       npm test
+       npm run build
+4. Deploy the API Worker first (the UI reads its new action eligibility flags):
+       cd cloudflare
+       npx wrangler deploy
+       cd ..
+5. Deploy the updated frontend using your normal GitHub Pages workflow.
+   If you can't push to the repository, do not assume the browser has the new frontend.
+
+MANUAL CHECK
+- Create a pending PR as an Employee and submit it for multi-level approval via Department Head.
+- Sign in as the *currently assigned* Procurement Head; the Purchase Requisitions row should display Reject.
+- Open Reject; cancel or enter blank reason: no change should be saved.
+- Enter a reason and confirm: status is Rejected, workflow stops.
+- Sign in as the Employee and open PR Details: the reason should be visible.
+- Check other roles cannot reject outside their assigned approval stage.
+- For a high-value requisition, test the Finance Head decision after Finance Officer approval.
+
+LOCAL VALIDATION PERFORMED HERE
+- 80/80 automated tests passed.
+- TypeScript project build/check passed.
+- Full Vite production build was not verified in this Linux container, because the
+  archived node_modules lacks the Linux-compatible optional Rollup binary.
+- No production database transactions were performed.
+
+DATABASE
+- No new SQL migration is required. The existing pr_approval_steps and
+  finance_head_signoffs tables retain cloud rejection notes. Requisition status
+  remains stored in the existing workspace snapshot.

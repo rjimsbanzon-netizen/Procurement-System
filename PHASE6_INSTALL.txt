@@ -1,0 +1,99 @@
+PROCUREFLOW — PHASE 6: FRONTEND PERFORMANCE & RELEASE CHECKS
+===========================================================
+Based on the last uploaded project plus Phase 1–5 patches.
+Only changed/additional files are in the patch ZIP.
+No production database records or API routes were altered.
+No SQL migration or Worker redeployment is required for this patch.
+
+CHANGES
+-------
+1. src/App.tsx
+   - 35 React pages now load through React.lazy() instead of eager imports.
+   - Accessible loading state appears while page code downloads.
+   - Existing canAccessTab() authorization gate remains in place.
+2. src/procureflow-mark.webp plus three import changes:
+   - src/components/Header.tsx
+   - src/components/Sidebar.tsx
+   - src/views/auth.ts
+   Optimized logo is approximately 38 KB (original bundled PNG ~1.48 MB).
+   Old PNG files are untouched in the repository, but these three imports
+   no longer bundle src/procureflow-mark.png in the shipped JavaScript assets.
+3. src/components/Header.tsx: role/delegation refresh polling from 5 sec to
+   15 sec, with immediate refresh on focus and visibility changes retained.
+   Server-side role checks remain authoritative regardless of poll frequency.
+4. src/components/PageErrorBoundary.tsx: adds a full-reload recovery option
+   for module download failures, without removing in-app Retry.
+5. scripts/verify-release.mjs and npm run verify:release:
+   - validate built JS/CSS links, PWA manifest and icons, service worker,
+     and bundled logo size; warn on oversized JS chunks.
+6. package.json adds the release checker and manual npm audit command.
+7. .github/workflows/deploy-pages.yml and verify-pull-request.yml
+   automatically run the release checker after the frontend build.
+8. tests/phase6Loading.test.mjs covers deferred routing, brand image,
+   failure recovery and reduced poll frequency.
+
+INSTALL
+-------
+Extract this ZIP into D:\GitHub\Procurement-System (or your repository root),
+maintaining the directory paths; do not replace your whole repository.
+Do not delete the original source folder or change database records.
+
+From PowerShell in your project directory:
+
+    npm ci
+    npm test
+    npm run build
+    npm run verify:release
+
+Expected source-level test count based on combined Phase 1–6 files: 78.
+Verify that routes load on desktop and mobile, especially PDF Generator,
+Advanced Reports, Procurement Tracking, Supplier Messaging and Finance.
+Verify PDF exports on Windows using test data.
+
+SECURITY: REQUIRED BEFORE PRODUCTION CERTIFICATION
+--------------------------------------------------
+The current lockfile still includes jspdf 2.5.2, for which published 2026
+security advisories exist. This patch does NOT update it because the
+package registry was unavailable in the build environment and a major
+version bump requires regression testing of generated PDFs.
+
+On your Windows machine, check actual affected dependency chains:
+
+    npm audit
+    npm run audit:prod
+
+Then evaluate the patched jsPDF version (GitHub's HTML injection advisory
+says versions >= 4.2.1 address CVE-2026-31938). Example IN A BRANCH:
+
+    npm install jspdf@^4.2.1
+    npm test
+    npm run build
+    npm run verify:release
+
+Exercise sample PDF reports, vouchers, PRs, POs, agreements, and inspections
+BEFORE shipping a jsPDF major upgrade. Check the remaining audit findings
+individually; never force a bulk upgrade without tests.
+
+VALIDATION ON THIS PATCH
+------------------------
+78 / 78 automated Node tests passed.
+Frontend TypeScript check passed.
+Release verifier passed against a mock built directory (checks executable).
+Real Vite production build NOT verified here because the ZIP bundled Windows
+Rollup dependencies, but this environment runs Linux and cannot download
+@rollup/rollup-linux-x64-gnu. Your local Windows build is authoritative.
+No live database, real payment, real supplier account, PWA install or
+cross-browser end-to-end tests were run for Phase 6.
+
+ROLLOUT / ROLLBACK
+------------------
+No new SQL migrations or Worker endpoints for this patch.
+Deploy the resulting frontend build through the existing GitHub Pages process.
+To roll back, restore the previous versions of the listed TypeScript source
+files, package.json, scripts and CI workflows. The new .webp file is safe to
+leave in the repository if not referenced. No database rollback is needed.
+
+STATUS
+------
+This patch improves frontend performance and release checks; it does not
+assert that ProcureFlow is production-certified or security-audited.

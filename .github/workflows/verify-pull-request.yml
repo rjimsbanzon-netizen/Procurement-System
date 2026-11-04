@@ -1,0 +1,38 @@
+name: Verify ProcureFlow Changes
+
+# Run the complete business workflow test suite on proposed changes.
+# No production deployment, database connection, or Cloudflare credentials.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install frontend and test dependencies
+        run: npm ci
+      - name: Run all unit and HTTP integration tests
+        run: npm test
+      - name: Type-check frontend
+        run: npx tsc --noEmit -p tsconfig.app.json
+      - name: Install Worker dependencies
+        run: npm ci --prefix cloudflare
+      - name: Type-check Worker routes
+        working-directory: cloudflare
+        run: npx tsc --noEmit --skipLibCheck --target es2022 --module esnext --moduleResolution bundler --allowImportingTsExtensions --types @cloudflare/workers-types src/index.ts
+      - name: Build frontend
+        run: npm run build
+      - name: Verify built PWA assets and performance budget
+        run: npm run verify:release

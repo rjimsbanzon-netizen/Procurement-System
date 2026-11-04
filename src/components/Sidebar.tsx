@@ -5,7 +5,7 @@ import { navigateTo } from '../core/renderBridge';
 import { CLOUD_API_BASE } from '../services/cloud';
 import { accountAPI } from '../services/account';
 import { getNotifications, getUnreadCount } from '../features/notifications/notificationService';
-import procureflowMark from '../procureflow-mark.png';
+import procureflowMark from '../procureflow-mark.webp';
 
 // Remember sidebar position per account even across sign-in transitions.
 // Page refreshes no longer unmount this sidebar.

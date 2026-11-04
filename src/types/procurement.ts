@@ -41,6 +41,7 @@ export interface RequisitionRecord extends ProcurementRecord {
   totalCost: number;
   requestedBy: string;
   requestedByUsername?: string;
+  requestedByUserId?: string;
   targetDate?: string;
   createdAt?: string;
   remarks?: string;

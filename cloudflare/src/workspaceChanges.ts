@@ -21,11 +21,29 @@ const isRow = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.i
 const canManageProcurement = (user: Actor) => user.role === 'admin' || user.app_role === 'Procurement Head';
 const canRecordDelivery = (user: Actor) => canManageProcurement(user) || user.app_role === 'Procurement Officer';
 const ownsPR = (pr: Row, user: Actor) =>
+  (!value(pr.requestedByUserId) || value(pr.requestedByUserId) === user.id) &&
   value(pr.requestedByUsername).toLowerCase() === user.username.toLowerCase() &&
   value(pr.department).toLowerCase() === user.department.toLowerCase();
 const onlyFields = (before: Row, after: Row, fields: readonly string[]) =>
   [...new Set([...Object.keys(before), ...Object.keys(after)])].every(key =>
     fields.includes(key) || same(before[key], after[key]));
+// Financial references and bank details are not part of ordinary staff reads.
+const publicPayment = (p: Row): Row => ({
+  id:p.id,poId:p.poId,status:p.status,supplierName:p.supplierName,
+  totalAmount:p.totalAmount,paymentAmount:p.paymentAmount,
+  deliveryVerified:p.deliveryVerified,department:p.department,
+});
+// Banking information belongs only in finance-approved views and a vendor's
+// own account, not in the cross-department Procurement/Operations queue.
+const privateSupplierFields = /bank|account[_-]?(?:name|number|holder|no|iban|swift|bic)|routing|iban|swift|bic|payout|paymentAccount|beneficiary/i;
+const scrubSupplierBanking = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(scrubSupplierBanking);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value as Row)
+    .filter(([key]) => !privateSupplierFields.test(key))
+    .map(([key, child]) => [key, scrubSupplierBanking(child)]));
+};
+const publicSupplier = (supplier: Row): Row => scrubSupplierBanking(supplier) as Row;
 
 /** Fail closed on duplicate ids, fabricated old values, and edits to other records. */
 export function applyWorkspaceChanges(previous: Workspace, changes: Change[]): { next?: Workspace; error?: string } {
@@ -125,8 +143,62 @@ export function authorizeWorkspaceChanges(actor: Actor, changes: Change[]): stri
 }
 
 /** Suppliers get relevant public needs and their own records, not internal budgets or peer bids. */
-export function projectWorkspace(previous: Workspace, actor: Actor): Workspace {
-  if (actor.role !== 'guest') return previous;
+export type WorkspaceReadScope = { financeAppointed?: boolean };
+/** Least-privilege compatibility snapshot for the existing frontend.
+ * This is a read restriction, not write authorization; all mutations still pass
+ * the separate server-owned record/finance/sourcing validators.
+ */
+export function projectWorkspace(previous: Workspace, actor: Actor, scope: WorkspaceReadScope = {}): Workspace {
+  if (actor.role === 'admin') return previous;
+  if (actor.role !== 'guest') {
+    const rows = (key: WorkspaceCollection): Row[] =>
+      Array.isArray(previous[key]) ? previous[key] as Row[] : [];
+    const dept = value(actor.department).toLowerCase();
+    const financeDepartment = ['finance & accounting', 'finance and accounting', 'finance'].includes(dept);
+    const canReadFinance = Boolean(scope.financeAppointed && financeDepartment);
+    // Procurement and Operations run cross-department queues. Finance can see
+    // those queues only when an active appointment was checked against D1.
+    const crossDepartment = ['Procurement Head', 'Procurement Officer', 'Operations Head', 'Operations Officer'].includes(actor.app_role) ||
+      ['procurement', 'operations'].includes(dept) || canReadFinance;
+    // All non-admin responses are allowlisted. Even an unexpected field added
+    // to the canonical snapshot must never silently become public.
+    if (crossDepartment) {
+      const data: Workspace = Object.fromEntries(WORKSPACE_COLLECTIONS.map(key => [key, rows(key)]));
+      if (!canReadFinance) {
+        data.payments = rows('payments').map(p => publicPayment(p));
+        data.suppliers = rows('suppliers').map(s => publicSupplier(s));
+      }
+      data.auditLogs = []; // Full activity details are available through Admin audit evidence.
+      return data;
+    }
+    // Ordinary staff and Department Heads see their department's workflow,
+    // plus any requisition they personally submitted after a transfer.
+    const requisitions = rows('requisitions').filter(r =>
+      value(r.department).toLowerCase() === dept ||
+      value(r.requestedByUsername).toLowerCase() === actor.username.toLowerCase());
+    const prIds = new Set(requisitions.map(r => value(r.id)));
+    const orders = rows('orders').filter(o => prIds.has(value(o.prId)));
+    const poIds = new Set(orders.map(o => value(o.id)));
+    const needs = rows('stockNeeds').filter(n => prIds.has(value(n.prId)) ||
+      ['Published', 'Open', 'Bidding Open'].includes(value(n.status)));
+    const needIds = new Set(needs.map(n => value(n.id)));
+    return {
+      stockNeeds: needs,
+      bids: rows('bids').filter(b => needIds.has(value(b.needId)) &&
+        prIds.has(value(needs.find(n => n.id === b.needId)?.prId))),
+      proposalMeetings: rows('proposalMeetings').filter(m =>
+        needIds.has(value(m.needId)) && prIds.has(value(needs.find(n => n.id === m.needId)?.prId))),
+      requisitions, orders,
+      deliveries: rows('deliveries').filter(d => poIds.has(value(d.poId))),
+      amendments: rows('amendments').filter(a => poIds.has(value(a.poId))),
+      payments: rows('payments').filter(p => poIds.has(value(p.poId))).map(p => publicPayment(p)),
+      suppliers: rows('suppliers').map(s => ({
+        id:s.id,name:s.name,category:s.category,contact:s.contact,email:s.email,phone:s.phone
+      })),
+      ratings: rows('ratings').filter(r => poIds.has(value(r.poId))),
+      auditLogs: [],
+    };
+  }
   const suppliers = Array.isArray(previous.suppliers) ? previous.suppliers as Row[] : [];
   const vendor = suppliers.find(s => value(s.name).toLowerCase() === actor.company_name.toLowerCase());
   const supplierId = value(vendor?.id) || `supplier-${actor.id}`;
@@ -159,6 +231,11 @@ export function validateWorkspaceLinks(changes: Change[], previous: Workspace, n
   const updated = (collection: WorkspaceCollection) => (next[collection] as Row[] | undefined) ?? [];
   const price = (v: unknown) => Number.isFinite(v) && typeof v === 'number' && v >= 0 && v <= 1e11;
   for (const {collection,id,before,after} of changes) {
+    // Paid transactions and procurement history must never disappear from
+    // the shared snapshot, even through an elevated account. Administrative
+    // cleanup uses its separately authorized reset workflow.
+    if (!after && before && ['requisitions','orders','deliveries','amendments','payments','ratings'].includes(collection))
+      return `${collection} history cannot be deleted through workspace changes.`;
     if (collection === 'requisitions' && after && actor.role !== 'admin') {
       const qty = Number(after.quantity);
       if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 100000000 || !price(after.unitPrice) ||

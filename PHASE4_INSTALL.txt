@@ -1,0 +1,119 @@
+ProcureFlow — Phase 4: Secure Indexed Reads and Audit Guard
+=============================================================
+
+SOURCE / BASELINE
+- Based on Procurement-System(20261103-142830).zip with Phase 1, Phase 2,
+  the Delivery Issues counter fix, and Phase 3 applied to the working tree.
+- This ZIP contains changed/new files ONLY, not a complete website.
+- Keep your original database, user accounts, uploads, dashboard, and PWA.
+- An updated copy of the Phase 3 migration 0021 is included for anyone whose
+  original Phase 3 SQL failed with "too many terms in compound SELECT".
+
+WHAT CHANGED
+1. GET /workspace-records?collection=requisitions&offset=0&limit=25
+   - Requires the existing Bearer session (Worker authenticates before route).
+   - Collection must match one of 10 approved procurement collections.
+   - limit: 1..100 (default 25), offset: 0..100000 (default 0).
+   - Server enforces Admin, department, Finance-appointment and supplier scope.
+   - Server checks indexed count and requested records against canonical data.
+   - If Phase 3 index is absent or inconsistent: HTTP 503/409, NOT silent data loss.
+   - Read-only. Existing application snapshot and record-specific save API stay
+     unchanged; the current frontend is not yet switched to paginated reads.
+
+2. Finance/supplier privacy
+   - Procurement and Operations can still read cross-department work queues.
+   - They no longer receive supplier banking details, or payment reference and
+     banking fields, in the shared workspace response or paginated API.
+   - Admin retains the Admin view; D1-appointed Finance personnel retain the
+     full Finance view. A vendor may still access its own vendor profile.
+
+3. Database-level audit evidence protection (new SQL 0022)
+   - Prevents UPDATE of actor/date/entity/action/before/after audit fields.
+   - Prevents deletion of audit evidence and its review history.
+   - Existing Admin review-state editing remains allowed.
+   - Does not change or delete old records. SQL guards are not cryptographic
+     tamper-proofing and cannot stop someone with database-owner DDL rights.
+
+4. Regression and CI checks
+   - Includes Phase 4 pagination/access/privacy/SQL guard tests.
+   - Worker type-check command in GitHub Actions supports .ts imports needed
+     by the standalone Node 22 regression tests.
+
+INSTALLATION (DO NOT SKIP BACKUP)
+A. Make a private backup of your real D1 database (never commit the export):
+
+   cd cloudflare
+   npx wrangler d1 export procurecorp-db --remote --output=../procureflow_pre_phase4.sql
+
+   Keep the SQL file outside your Git repository or add it to .gitignore.
+   Practice on a staging database before working with production.
+
+B. Extract the Phase 4 ZIP into the project ROOT with folders preserved.
+   If Phase 3 migration 0021 previously failed, replace its file with the
+   corrected copy included in this package. Run 0021 ONLY if the indexed
+   table/triggers were not successfully installed before:
+
+   cd cloudflare
+   npx wrangler d1 execute procurecorp-db --remote --file=./migrations/0021_workspace_record_index.sql
+
+   WARNING: Migration 0021 rebuilds only the DERIVED index, but can interrupt
+   writes while it runs. Do not reset the database. Do not rerun if already
+   successful. Ensure Phase 3 Worker code was deployed as required.
+
+C. In the repository root, run the regression checks and build:
+
+   npm ci
+   npm test
+   npm run build
+   cd cloudflare
+   npm ci
+   npx tsc --noEmit --skipLibCheck --target es2022 --module esnext --moduleResolution bundler --allowImportingTsExtensions --types @cloudflare/workers-types src/index.ts
+
+D. Deploy the Phase 4 Worker first, and then apply the NEW audit migration:
+
+   npx wrangler deploy
+   npx wrangler d1 execute procurecorp-db --remote --file=./migrations/0022_immutable_audit_evidence.sql
+
+   SQL 0022 may be rerun safely; it uses CREATE TRIGGER IF NOT EXISTS.
+   It requires earlier migration 0016 (audit_evidence tables).
+
+E. Check Phase 3 index counts (non-sensitive aggregate only):
+
+   npx wrangler d1 execute procurecorp-db --remote --command="SELECT collection,COUNT(*) AS total FROM workspace_record_index GROUP BY collection ORDER BY collection;"
+
+   From a signed-in Admin session, GET /admin/workspace-record-integrity
+   and confirm response.ok=true. A non-Admin should receive HTTP 403.
+   With a signed-in user, GET /workspace-records?collection=requisitions&limit=10.
+   Test Employee IT vs HR, Procurement, Finance with and without appointment,
+   Supplier A vs Supplier B, and Admin to confirm appropriate records/fields.
+   Never paste a bearer token into a support ticket or chat.
+
+F. Deploy the frontend using your normal website workflow. There are no new
+   frontend modules in this Phase 4 package. Test on a DISPOSABLE database:
+   make/update a PR, inspect Finance references, review audit evidence,
+   and confirm the Admin integrity endpoint remains healthy.
+
+ROLLBACK
+- The new 0022 audit protection has an emergency rollback script:
+
+   cd cloudflare
+   npx wrangler d1 execute procurecorp-db --remote --file=./rollback/phase4_audit_guard_rollback.sql
+
+- This drops only the 4 Phase 4 audit triggers; it does NOT delete audit events.
+- Do NOT use the Phase 3 rollback unless you also roll back Phase 3 API logic
+  in the correct order. Do NOT run Admin database reset to troubleshoot.
+- Roll back the Worker code to the previous commit if this release fails.
+
+LOCAL VALIDATION & LIMITATIONS
+- Automated Node 22 regression tests: 59 passed.
+- Frontend and Worker TypeScript checks: passed using node to execute tsc.
+- SQLite audit-trigger migration and permission/pagination tests: passed.
+- Full Vite build not verified here: the uploaded Windows dependency tree lacks
+  @rollup/rollup-linux-x64-gnu. Reinstall dependencies on your Windows machine
+  or CI runner and run npm run build.
+- NO remote D1 migration, live Worker deployment, production transaction or
+  authenticated browser E2E verification was performed by this patch.
+- Phase 4 uses the authoritative enterprise_state snapshot for policy checks;
+  workspace_record_index is still a derived mirror, not a full relational cutover.
+- The current frontend still fetches the compatibility snapshot; automatic UI
+  migration to record pages should only happen after live access tests pass.

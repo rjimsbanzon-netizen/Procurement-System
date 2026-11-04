@@ -4,6 +4,7 @@ import { DB, ui } from '../store/state';
 import { renderApp, navigateTo } from '../core/renderBridge';
 import { CLOUD_API_BASE } from '../services/cloud';
 import { financeAPI } from '../services/finance';
+import { receiveServerRequisition } from '../services/requisitionCloudUpdate';
 import { Storage } from '../services/storage';
 import { logAudit } from '../services/audit';
 import { showToast } from '../services/toast';
@@ -25,8 +26,8 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
   const [remarks, setRemarks] = useState(String(existing?.remarks || ''));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const canEdit = Boolean(existing && !CLOUD_API_BASE && existing.status === 'Pending' &&
-    ownsRequisition(existing,DB.currentUser));
+  const canEdit = Boolean(existing && ownsRequisition(existing,DB.currentUser) &&
+    (existing.status === 'Rejected' || (!CLOUD_API_BASE && existing.status === 'Pending')));
   const permitted = editId ? canEdit : hasPermission('create_pr');
 
   useEffect(() => {
@@ -48,7 +49,16 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
       const data = { itemTitle: title.trim(), specs: specs.trim(), quantity: qty, unit: unitOfMeasure, unitPrice: unit,
         targetDate: date, remarks: remarks.trim(), totalCost: Math.round(qty * unit * 100) / 100 };
       if (existing && canEdit) {
+        if(CLOUD_API_BASE && existing.status==='Rejected') {
+          await Storage.flush();
+          const result=await financeAPI.reviseRejected(existing.id,data,Number(existing.resubmissionCount||0),String(existing.revisedAt||''));
+          receiveServerRequisition(result.pr);
+          dismissAfterSave();
+          showToast(`Requisition ${existing.id} revised. You can now resubmit it for Department Head review.`, 'success');
+          return;
+        }
         Object.assign(existing, data);
+        if(existing.status==='Rejected')existing.revisedAt=new Date().toISOString();
         logAudit('PR Updated', `Pending requisition ${existing.id} edited by its requester.`);
         Storage.save(DB);
         dismissAfterSave();
@@ -58,7 +68,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
       const nextId = Math.max(1000, ...DB.requisitions.map(r => Number(String(r.id).match(/^PR-(\d+)$/)?.[1] || 1000))) + 1;
       const prId = `PR-${nextId}`;
       const newPR = { id: prId, department: DB.currentUser.department, ...data, status: 'Pending',
-        requestedBy: DB.currentUser.name, requestedByUsername: DB.currentUser.username,
+        requestedBy: DB.currentUser.name, requestedByUsername: DB.currentUser.username, requestedByUserId: DB.currentUser.id,
         createdAt: new Date().toISOString().replace('T', ' ').slice(0, 16) };
       DB.requisitions.unshift(newPR);
       logAudit('PR Created', `Requisition ${prId} created for ${data.itemTitle}.`);
@@ -82,8 +92,8 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/65 p-3 sm:p-5" onMouseDown={event => { if (event.target === event.currentTarget) dismiss(); }}>
     <section role="dialog" aria-modal="true" aria-labelledby={titleId} className="my-auto w-full max-w-xl max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6">
-      <header className="mb-4 flex items-center justify-between border-b pb-4"><h2 id={titleId} className="text-lg font-bold text-slate-900">{editId ? 'Edit Purchase Requisition' : 'New Purchase Requisition'}</h2><button type="button" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close requisition form" onClick={dismiss}><i className="fa-solid fa-xmark"/></button></header>
-      {!permitted ? <p role="alert" className="rounded-lg bg-rose-50 p-4 text-sm text-rose-800">You cannot modify this requisition. Cloud approval records must be changed through an authorized server-side workflow.</p> : <form className="space-y-4" onSubmit={event => void submit(event)}>
+      <header className="mb-4 flex items-center justify-between border-b pb-4"><h2 id={titleId} className="text-lg font-bold text-slate-900">{editId ? existing?.status==='Rejected' ? 'Revise Rejected Requisition' : 'Edit Purchase Requisition' : 'New Purchase Requisition'}</h2><button type="button" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close requisition form" onClick={dismiss}><i className="fa-solid fa-xmark"/></button></header>
+      {!permitted ? <p role="alert" className="rounded-lg bg-rose-50 p-4 text-sm text-rose-800">You cannot modify this requisition. Only the original requester can revise a rejected requisition. Submitted requests cannot be edited during an active approval.</p> : <form className="space-y-4" onSubmit={event => void submit(event)}>
         <label className="block text-sm font-semibold text-slate-700">Item title / description<input className={`${fieldClass} mt-1`} value={title} onChange={e => setTitle(e.target.value)} maxLength={200} required placeholder="e.g. Ergonomic Office Chairs"/></label>
         <label className="block text-sm font-semibold text-slate-700">Specifications & requirements<textarea className={`${fieldClass} mt-1`} rows={3} value={specs} onChange={e => setSpecs(e.target.value)} required placeholder="Detailed dimensions and required specifications"/></label>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -105,7 +115,7 @@ export function RequisitionFormModal({ editId }: { editId?: string }) {
         <label className="block text-sm font-semibold text-slate-700">Remarks / justification<textarea className={`${fieldClass} mt-1`} rows={2} value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Purpose for the request"/></label>
         <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Quantity: <strong>{formatQuantity(quantity, unitOfMeasure)}</strong><span className="mx-2">·</span>Estimated total: <strong className="text-slate-900">{peso(Number(quantity) * Number(price))}</strong></div>
         {error && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
-        <footer className="flex flex-wrap justify-end gap-2 border-t pt-4"><button className={secondaryButton} type="button" disabled={busy} onClick={dismiss}>Cancel</button><button type="submit" disabled={busy} className={mainButton}>{busy ? 'Saving…' : editId ? 'Save changes' : 'Submit Requisition'}</button></footer>
+        <footer className="flex flex-wrap justify-end gap-2 border-t pt-4"><button className={secondaryButton} type="button" disabled={busy} onClick={dismiss}>Cancel</button><button type="submit" disabled={busy} className={mainButton}>{busy ? 'Saving…' : existing?.status==='Rejected' ? 'Save revision' : editId ? 'Save changes' : 'Submit Requisition'}</button></footer>
       </form>}
     </section>
   </div>;

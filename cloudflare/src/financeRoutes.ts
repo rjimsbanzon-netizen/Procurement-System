@@ -1,7 +1,7 @@
 /** ProcureFlow features 6–8. Additive, authenticated D1 routes; no user-role migration. */
 import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
 import { actingDelegation, principalFor, philippinesToday } from './delegationRoutes';
-import { evidenceStatement } from './auditEvidenceRoutes';
+import { evidenceStatement, conditionalChangeEvidence } from './auditEvidenceRoutes';
 
 export interface FinanceEnv { DB: D1Database; DOCUMENTS: KVNamespace }
 export interface FinanceUser {
@@ -14,7 +14,7 @@ export interface FinanceUser {
   company_name: string;
 }
 type Row = Record<string, any>;
-type Snapshot = { requisitions: Row[]; orders: Row[]; payments: Row[]; deliveries: Row[] };
+type Snapshot = { requisitions: Row[]; orders: Row[]; payments: Row[]; deliveries: Row[]; stockNeeds?: Row[]; bids?: Row[] };
 const toCents = (value: unknown) => {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : NaN;
@@ -79,7 +79,7 @@ async function snapshot(env: FinanceEnv): Promise<{data:Snapshot; text:string}> 
   const row = await env.DB.prepare('SELECT data FROM enterprise_state WHERE id=1').first<{data:string}>();
   const text = row?.data ?? '';
   const obj = text ? JSON.parse(text) as Partial<Snapshot> : {};
-  return { data: {requisitions:obj.requisitions ?? [],orders:obj.orders ?? [], payments:obj.payments ?? [],deliveries:obj.deliveries ?? []}, text };
+  return { data: {requisitions:obj.requisitions ?? [],orders:obj.orders ?? [], payments:obj.payments ?? [],deliveries:obj.deliveries ?? [], stockNeeds:obj.stockNeeds ?? [], bids:obj.bids ?? []}, text };
 }
 async function getBudgetRows(env: FinanceEnv) {
   return (await env.DB.prepare('SELECT department,allocated_cents,updated_at FROM department_budgets ORDER BY department').all<Row>()).results;
@@ -141,6 +141,34 @@ async function canApproveStep(env:FinanceEnv,user:FinanceUser,role:string,depart
   const row=await env.DB.prepare('SELECT user_id FROM finance_approvers WHERE step_role=? AND department=?').bind(role,department).first<{user_id:string}>();
   return row?.user_id===user.id;
 }
+/** The requester must be verified against their authenticated identity, not a UI-supplied field. */
+function ownsRejectedPR(user:FinanceUser,pr:Row):boolean {
+  return user.role!=='guest' && (typeof pr.requestedByUserId==='string' && pr.requestedByUserId.trim()
+    ? pr.requestedByUserId===user.id
+    : typeof pr.requestedByUsername==='string' && pr.requestedByUsername.trim()
+      ? same(pr.requestedByUsername,user.username)
+      : same(pr.requestedBy,user.name) && same(pr.department,user.department));
+}
+function hasLinkedRequisitionProcurement(data:Snapshot,prId:string):boolean {
+  const state=data as unknown as Row;
+  const needs=Array.isArray(state.stockNeeds)?state.stockNeeds as Row[]:[];
+  const linkedNeedIds=new Set(needs.filter(n=>same(n.prId,prId)).map(n=>n.id));
+  const bids=Array.isArray(state.bids)?state.bids as Row[]:[];
+  const orders=data.orders.filter(po=>same(po.prId,prId));
+  const orderIds=new Set(orders.map(po=>po.id));
+  return needs.some(n=>same(n.prId,prId)) || bids.some(b=>linkedNeedIds.has(b.needId)) ||
+    orders.length>0 || data.deliveries.some(d=>orderIds.has(d.poId)) ||
+    data.payments.some(p=>orderIds.has(p.poId));
+}
+async function canRejectUnsubmittedDraft(env:FinanceEnv,user:FinanceUser,pr:Row):Promise<boolean>{
+  if(user.role==='guest'||ownsRejectedPR(user,pr))return false;
+  if(user.role==='admin')return true;
+  const appointed=await env.DB.prepare("SELECT user_id FROM finance_approvers WHERE step_role='Department Head' AND department=?")
+    .bind(pr.department).first<{user_id:string}>();
+  return Boolean((appointed?.user_id===user.id && same(user.department,pr.department)) ||
+    await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Department Head',pr.department) ||
+    (same(pr.department,'Operations') && await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Operations Head')));
+}
 async function approvalList(env:FinanceEnv,user:FinanceUser,data:Snapshot) {
   const requests=(await env.DB.prepare('SELECT * FROM pr_approval_requests ORDER BY created_at DESC').all<Row>()).results;
   const steps=(await env.DB.prepare('SELECT * FROM pr_approval_steps ORDER BY pr_id,step_no').all<Row>()).results;
@@ -149,15 +177,30 @@ async function approvalList(env:FinanceEnv,user:FinanceUser,data:Snapshot) {
   const delegateHead=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Finance Head');
   const delegateProcurement=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Procurement Head');
   const delegateFinance=await actingDelegation(env,{...user,status:'approved',access_revoked:0,name:user.name},'Finance Officer');
-  return requests.filter(r=>canSeeDepartment(user,r.department)||r.requested_by===user.id ||
+  return Promise.all(requests.filter(r=>canSeeDepartment(user,r.department)||r.requested_by===user.id ||
     Boolean(delegateProcurement||delegateFinance) ||
     ((financeHead?.user_id===user.id||delegateHead) && headReviews.some(h=>h.pr_id===r.pr_id)))
-    .map(r=>{
+    .map(async r=>{
       const head=headReviews.find(h=>h.pr_id===r.pr_id);
-      return {prId:r.pr_id,requestedBy:r.requested_by,department:r.department,amount:amount(r.amount_cents),status:r.status,currentStep:r.current_step,totalSteps:r.total_steps,createdAt:r.created_at,pr:data.requisitions.find(p=>p.id===r.pr_id)??null,
+      const pr=data.requisitions.find(p=>p.id===r.pr_id)??null;
+      const approvalSteps=steps.filter(s=>s.pr_id===r.pr_id);
+      const pendingStep=approvalSteps.find(s=>s.step_no===r.current_step);
+      // The register uses these server-computed capabilities only to display its
+      // actions. The POST handlers always re-authorize when a decision is made.
+      const current=Boolean(r.status==='Pending' && pr?.status==='Pending' &&
+        same(pr.department,r.department) && toCents(pr.totalCost)===Number(r.amount_cents) &&
+        pendingStep?.status==='Pending' && r.requested_by!==user.id);
+      const canReject=Boolean(current && pendingStep &&
+        await canApproveStep(env,user,pendingStep.step_role,r.department));
+      const financeStep=approvalSteps.find(s=>s.step_role==='Finance Officer');
+      const canRejectFinanceHead=Boolean(current && head?.status==='Pending' &&
+        financeStep?.status==='Approved' && financeStep.decided_by!==user.id &&
+        ((activeFinanceEmployee(financeHead,'Finance Head') && financeHead?.user_id===user.id)||delegateHead));
+      return {prId:r.pr_id,requestedBy:r.requested_by,department:r.department,amount:amount(r.amount_cents),status:r.status,currentStep:r.current_step,totalSteps:r.total_steps,createdAt:r.created_at,pr,
+        canReject,canRejectFinanceHead,
         financeHead:head?{status:head.status,decidedAt:head.decided_at,decidedBy:head.decided_by,comment:head.comment}:null,
-        steps:steps.filter(s=>s.pr_id===r.pr_id).map(s=>({number:s.step_no,role:s.step_role,status:s.status,comment:s.comment,decidedAt:s.decided_at,decidedBy:s.decided_by}))};
-    });
+        steps:approvalSteps.map(s=>({number:s.step_no,role:s.step_role,status:s.status,comment:s.comment,decidedAt:s.decided_at,decidedBy:s.decided_by}))};
+    }));
 }
 function verifyDelivery(data:Snapshot,po:Row):boolean {
   const ds=data.deliveries.filter(d=>d.poId===po.id);
@@ -251,6 +294,117 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
   const method=request.method;
   const admin=user.role==='admin';
   const staff=user.role!=='guest';
+  // Requisition revisions are server-owned. A Pending PR without a D1 approval
+  // request is an unsubmitted draft; never infer this from the display status.
+  const revisionRoute=path.match(/^\/finance\/requisitions\/([^/]+)\/(reject-draft|revise|resubmit|history)$/);
+  if(path==='/finance/requisitions/capabilities' && method==='GET') {
+    if(!staff)return reply({error:'Staff access required.'},403,cors);
+    const {data}=await snapshot(env);
+    const workflows=(await env.DB.prepare('SELECT pr_id,status FROM pr_approval_requests').all<Row>()).results;
+    const byId=new Map(workflows.map(row=>[row.pr_id,row]));
+    const draftRejectableIds:string[]=[],editableRejectedIds:string[]=[];
+    for(const pr of data.requisitions){
+      if(pr.status==='Pending'&&!byId.has(pr.id) && !same(pr.requestedByUsername,user.username) &&
+        (await canRejectUnsubmittedDraft(env,user,pr)))draftRejectableIds.push(pr.id);
+      if(pr.status==='Rejected' && ownsRejectedPR(user,pr) && !hasLinkedRequisitionProcurement(data,pr.id))editableRejectedIds.push(pr.id);
+    }
+    return reply({draftRejectableIds,editableRejectedIds},200,cors);
+  }
+  if(revisionRoute){
+    if(!staff)return reply({error:'Staff account required.'},403,cors);
+    const prId=decodeURIComponent(revisionRoute[1]);
+    if(prId.length>160)return reply({error:'Invalid requisition number.'},400,cors);
+    const action=revisionRoute[2];
+    const {data,text}=await snapshot(env);
+    const original=text?JSON.parse(text) as Row:{};
+    const pr=data.requisitions.find(r=>r.id===prId);
+    if(!pr)return reply({error:'Requisition not found.'},404,cors);
+    if(!canSeeDepartment(user,pr.department) && !ownsRejectedPR(user,pr) && !await canRejectUnsubmittedDraft(env,user,pr))return reply({error:'Requisition access denied.'},403,cors);
+    const workflow=await env.DB.prepare('SELECT * FROM pr_approval_requests WHERE pr_id=?').bind(prId).first<Row>();
+    if(action==='history'&&method==='GET'){
+      const history=(await env.DB.prepare('SELECT cycle_no,rejected_at,rejected_by,rejection_reason,pr_json,workflow_json,steps_json,finance_head_json FROM pr_revision_history WHERE pr_id=? ORDER BY cycle_no DESC LIMIT 30').bind(prId).all<Row>()).results;
+      return reply({history:history.map(row=>({cycle:Number(row.cycle_no),rejectedAt:row.rejected_at,rejectedBy:row.rejected_by,rejectionReason:row.rejection_reason,pr:JSON.parse(row.pr_json),workflow:JSON.parse(row.workflow_json||'null'),steps:JSON.parse(row.steps_json||'[]'),financeHead:JSON.parse(row.finance_head_json||'null')}))},200,cors);
+    }
+    if(method!=='POST')return reply({error:'Unsupported requisition action.'},405,cors);
+    const body=await request.json() as Row;
+    const now=new Date().toISOString();
+    const linked=hasLinkedRequisitionProcurement(data,prId);
+    // Reject a draft only before the Department Head has submitted it.
+    if(action==='reject-draft'){
+      if(pr.status!=='Pending'||workflow)return reply({error:'Only unsubmitted, still-pending drafts may be rejected here.'},409,cors);
+      if(linked)return reply({error:'Linked sourcing or purchase-order records prevent draft rejection.'},409,cors);
+      if(!await canRejectUnsubmittedDraft(env,user,pr))return reply({error:'Only the assigned Department Head, authorized substitute, or Admin may reject this draft (not its requester).'},403,cors);
+      const reason=typeof body.reason==='string'?body.reason.trim():'';
+      if(!reason||reason.length>1000)return reply({error:'Enter a rejection reason of 1–1000 characters.'},400,cors);
+      const before=structuredClone(pr);
+      Object.assign(pr,{status:'Rejected',rejectionReason:reason,rejectedAt:now,rejectedBy:user.name,rejectedById:user.id});
+      const next=JSON.stringify({...original,requisitions:data.requisitions});
+      if(next.length>1_000_000)return reply({error:'Cloud workspace limit exceeded.'},413,cors);
+      const results=await env.DB.batch([
+        env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=? RETURNING id').bind(next,now,text),
+        ...conditionalChangeEvidence(env,user,[{collection:'requisitions',id:prId,before,after:pr}],next,now)
+      ]);
+      if(results[0].results?.length!==1)return reply({error:'Draft changed on another device. Refresh and retry.'},409,cors);
+      return reply({ok:true,pr,status:pr.status},200,cors);
+    }
+    if(action==='revise'||action==='resubmit'){
+      if(pr.status!=='Rejected'||(workflow&&workflow.status!=='Rejected'))return reply({error:'Only a rejected requisition with a completed rejection decision can be revised.'},409,cors);
+      if(!ownsRejectedPR(user,pr))return reply({error:'Only the original requester can revise or resubmit a rejected requisition.'},403,cors);
+      if(linked)return reply({error:'A sourcing need, bid, delivery, or PO is linked; contact Admin instead of resubmitting.'},409,cors);
+      const version=Number(pr.resubmissionCount??0);
+      if(body.expectedVersion!==version || String(body.expectedUpdatedAt??'')!==String(pr.revisedAt??''))
+        return reply({error:'This requisition was revised by another session. Refresh and retry.'},409,cors);
+      // Save the original rejected round once. The archived approval record and
+      // decisions are retained even when the live workflow is reset on resubmit.
+      const steps=workflow?(await env.DB.prepare('SELECT * FROM pr_approval_steps WHERE pr_id=? ORDER BY step_no').bind(prId).all<Row>()).results:[];
+      const head=workflow?await env.DB.prepare('SELECT * FROM finance_head_signoffs WHERE pr_id=?').bind(prId).first<Row>():null;
+      const reason=String(pr.rejectionReason||steps.find(step=>step.status==='Rejected')?.comment|| (head?.status==='Rejected'?head.comment:'')||'Historical rejection (no reason recorded)');
+      const archivedPr=JSON.stringify(pr);
+      const rejectionStep=steps.find(step=>step.status==='Rejected');
+      const archivedAt=String(pr.rejectedAt||rejectionStep?.decided_at||(head?.status==='Rejected'?head?.decided_at:'')||workflow?.decided_at||now);
+      const archivedBy=String(pr.rejectedById||rejectionStep?.decided_by||(head?.status==='Rejected'?head?.decided_by:'')||'unknown');
+      const before=structuredClone(pr);
+      if(action==='revise'){
+        const fields=body.fields;
+        if(!fields||typeof fields!=='object'||Array.isArray(fields))return reply({error:'Submit editable requisition details.'},400,cors);
+        const allowed=['itemTitle','specs','quantity','unit','unitPrice','totalCost','targetDate','remarks'];
+        if(Object.keys(fields).some(key=>!allowed.includes(key)))return reply({error:'Requisition identity, department, and approval fields cannot be modified.'},400,cors);
+        if(typeof fields.itemTitle!=='string'||!fields.itemTitle.trim()||fields.itemTitle.length>200 ||
+          typeof fields.specs!=='string'||!fields.specs.trim()||fields.specs.length>5000 ||
+          !Number.isInteger(fields.quantity)||fields.quantity<1||fields.quantity>1_000_000||
+          typeof fields.unit!=='string'||!fields.unit.trim()||fields.unit.length>40 ||
+          typeof fields.unitPrice!=='number'||!Number.isFinite(fields.unitPrice)||fields.unitPrice<0||
+          !Number.isSafeInteger(toCents(fields.unitPrice))||
+          typeof fields.totalCost!=='number'||!Number.isSafeInteger(toCents(fields.totalCost))||
+          toCents(fields.totalCost)!==Math.round(fields.quantity*toCents(fields.unitPrice))||
+          typeof fields.targetDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(fields.targetDate)||
+          typeof fields.remarks!=='string'||fields.remarks.length>5000)
+          return reply({error:'Enter a valid item, specifications, quantity, unit, price, date, and justification.'},400,cors);
+        Object.assign(pr,fields,{revisedAt:now,revisedBy:user.id});
+      }else{
+        const note=typeof body.note==='string'?body.note.trim():'';
+        if(note.length<3||note.length>1000)return reply({error:'Explain the changes made before resubmitting (3–1000 characters).'},400,cors);
+        // Revert to an unsubmitted Pending draft. The assigned Department Head
+        // must still initiate the independent multi-level approval sequence.
+        pr.status='Pending';pr.resubmissionCount=version+1;pr.resubmissionNote=note;pr.resubmittedAt=now;
+        delete pr.rejectionReason;delete pr.rejectedAt;delete pr.rejectedBy;delete pr.rejectedById;
+      }
+      const next=JSON.stringify({...original,requisitions:data.requisitions});
+      if(next.length>1_000_000)return reply({error:'Cloud workspace limit exceeded.'},413,cors);
+      const statements=[
+        env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=? RETURNING id').bind(next,now,text),
+        env.DB.prepare(`INSERT OR IGNORE INTO pr_revision_history
+          (pr_id,cycle_no,rejected_at,rejected_by,rejection_reason,pr_json,workflow_json,steps_json,finance_head_json)
+          SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM enterprise_state WHERE id=1 AND data=? AND updated_at=?)`)
+          .bind(prId,version,archivedAt,archivedBy,reason,archivedPr,JSON.stringify(workflow),JSON.stringify(steps),JSON.stringify(head),next,now),
+        ...(action==='resubmit'&&workflow?[env.DB.prepare("DELETE FROM pr_approval_requests WHERE pr_id=? AND status='Rejected' AND EXISTS(SELECT 1 FROM enterprise_state WHERE id=1 AND data=? AND updated_at=?)").bind(prId,next,now)]:[]),
+        ...conditionalChangeEvidence(env,user,[{collection:'requisitions',id:prId,before,after:pr}],next,now)
+      ];
+      const result=await env.DB.batch(statements);
+      if(result[0].results?.length!==1)return reply({error:'Requisition changed during your update. Refresh and retry.'},409,cors);
+      return reply({ok:true,pr,status:pr.status},200,cors);
+    }
+  }
   if(path==='/finance/summary'&&method==='GET') {
     if(!staff)return reply({error:'Staff access required.'},403,cors);
     const {data}=await snapshot(env);
@@ -656,9 +810,9 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       env.DB.prepare("UPDATE pr_approval_steps SET status=?,decided_by=?,comment=?,decided_at=? WHERE pr_id=? AND step_no=? AND status='Pending'").bind(body.decision==='reject'?'Rejected':'Approved',user.id,body.comment.trim(),now,prId,row.current_step),
       env.DB.prepare("UPDATE pr_approval_requests SET status=?,current_step=?,decided_at=? WHERE pr_id=? AND status='Pending' AND current_step=?").bind(state,final?row.current_step:row.current_step+1,final?now:null,prId,row.current_step)
     ];
-    if(final)changes.push(env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=?').bind(JSON.stringify({...JSON.parse(text),requisitions:data.requisitions}),now,text));
+    if(final)changes.push(env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=? RETURNING id').bind(JSON.stringify({...JSON.parse(text),requisitions:data.requisitions}),now,text));
     const results=await env.DB.batch(changes);
-    if(results.some(r=>r.meta.changes!==1))return reply({error:'Concurrent workflow update detected. Refresh and retry; contact admin if status remains inconsistent.'},409,cors);
+    if(results.some((r,i)=> i===2 ? r.results?.length!==1 : r.meta.changes!==1))return reply({error:'Concurrent workflow update detected. Refresh and retry; contact admin if status remains inconsistent.'},409,cors);
     return reply({ok:true,status:state,nextStep:final?null:row.current_step+1},200,cors);
   }
   // High-value independent Finance Head signoff, after Finance Officer and before Admin.
@@ -693,11 +847,11 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     ];
     if(rejected){
       queries.push(env.DB.prepare("UPDATE pr_approval_requests SET status='Rejected',decided_at=? WHERE pr_id=? AND status='Pending'").bind(now,prId));
-      queries.push(env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=?')
+      queries.push(env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=? RETURNING id')
         .bind(JSON.stringify({...JSON.parse(text),requisitions:data.requisitions}),now,text));
     }
     const results=await env.DB.batch(queries);
-    if(results.some(r=>r.meta.changes!==1))return reply({error:'Approval changed on another device. Refresh and review before retrying.'},409,cors);
+    if(results.some((r,i)=> i===2 ? r.results?.length!==1 : r.meta.changes!==1))return reply({error:'Approval changed on another device. Refresh and review before retrying.'},409,cors);
     return reply({ok:true,status:rejected?'Rejected':'Approved'},200,cors);
   }
   // A pre-existing desync can arise if a stale browser snapshot changed a PR's
@@ -725,9 +879,9 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
     auditLogs.unshift({id:`log-reconcile-${crypto.randomUUID()}`,timestamp:new Date().toISOString(),user:user.name,role:'Admin',action:'PR Approval Status Reconciled',details:`Restored ${prId} to Pending; approval workflow still awaiting ${step.step_role}.`});
     const next=JSON.stringify({...entire,requisitions:data.requisitions,auditLogs});
     if(next.length>1_000_000)return reply({error:'Enterprise data exceeds the allowed size; ask Admin to archive old audit records.'},413,cors);
-    const result=await env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=?')
+    const result=await env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=? RETURNING id')
       .bind(next,new Date().toISOString(),text).run();
-    if(result.meta.changes!==1)return reply({error:'Cloud data changed during reconciliation. Refresh and retry.'},409,cors);
+    if(result.results?.length!==1)return reply({error:'Cloud data changed during reconciliation. Refresh and retry.'},409,cors);
     return reply({ok:true,prId,status:'Pending',nextApprover:step.step_role},200,cors);
   }
   if(path==='/finance/invoices'&&method==='GET') {
@@ -888,9 +1042,9 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       details:`${kind} ${record.id} restored from an Admin-supplied JSON backup; original approvals and invoice states were not altered.`});
     const next=JSON.stringify({...original,[kind==='PR'?'requisitions':'orders']:records,auditLogs:logs});
     if(next.length>1_000_000)return reply({error:'Cloud snapshot size limit exceeded. Record not restored.'},413,cors);
-    const result=await env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=?')
+    const result=await env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=? WHERE id=1 AND data=? RETURNING id')
       .bind(next,new Date().toISOString(),text).run();
-    if(result.meta.changes!==1)return reply({error:'Cloud data changed during restoration. Refresh and retry.'},409,cors);
+    if(result.results?.length!==1)return reply({error:'Cloud data changed during restoration. Refresh and retry.'},409,cors);
     return reply({ok:true,kind,id:record.id},200,cors);
   }
   // A full reset must also clear the D1 approvals and invoice rows; a normal
@@ -920,6 +1074,7 @@ export async function handleFinanceRoutes(request:Request,env:FinanceEnv,user:Fi
       env.DB.prepare('DELETE FROM supplier_invoices'),
       env.DB.prepare('DELETE FROM pr_approval_steps'),
       env.DB.prepare('DELETE FROM pr_approval_requests'),
+      env.DB.prepare('DELETE FROM pr_revision_history'),
       env.DB.prepare('DELETE FROM notification_reads'),
       env.DB.prepare('INSERT INTO enterprise_state(id,data,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at').bind(JSON.stringify(data),now)
     ]);
@@ -951,7 +1106,7 @@ export async function validateFinanceSnapshotWrite(env:FinanceEnv, incoming:Reco
   // Once a PR enters D1 approvals, its pending details must not be silently
   // changed, removed or overwritten by a stale local snapshot.
   const pendingWorkflows=(await env.DB.prepare("SELECT pr_id,department,amount_cents FROM pr_approval_requests WHERE status='Pending'").all<Row>()).results;
-  const protectedFields=['id','status','department','itemTitle','specs','quantity','unitPrice','totalCost','targetDate','remarks','requestedBy','requestedByUsername','createdAt'];
+  const protectedFields=['id','status','department','itemTitle','specs','quantity','unitPrice','totalCost','targetDate','remarks','requestedBy','requestedByUsername','requestedByUserId','createdAt'];
   for(const approval of pendingWorkflows){
     const before=oldPrs.filter(p=>p.id===approval.pr_id);
     const after=newPrs.filter(p=>p.id===approval.pr_id);
@@ -1007,6 +1162,8 @@ export async function validateFinanceSnapshotWrite(env:FinanceEnv, incoming:Reco
       if(req?.status!=='Approved')return `PR ${pr.id} must complete the multi-level approval workflow first.`;
     }
     if(old?.status==='Approved'&&pr.status==='Pending')return `Cannot reverse approved PR ${pr.id} via snapshot save.`;
+    if(old?.status==='Rejected' && JSON.stringify(old)!==JSON.stringify(pr)) return `PR ${pr.id} was rejected. Use the protected revise/resubmit action instead.`;
+    if(old?.status==='Pending' && pr.status==='Rejected') return `PR ${pr.id} must be rejected through an authorized server action.`;
   }
   for (const earlier of oldPayments) {
     if (earlier.status !== 'Paid') continue;

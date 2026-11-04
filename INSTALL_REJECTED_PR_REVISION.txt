@@ -1,0 +1,87 @@
+ProcureFlow — Reject Draft + Revise / Resubmit Rejected PR
+======================================================
+This patch extends the previous "Reject Purchase Requisition" upgrade.
+Apply over your existing project after Phases 1–6 and that rejection patch.
+
+WHAT CHANGED
+1) An assigned Department Head / authorized substitute / Admin can REJECT an
+   unsubmitted Pending PR with a required reason. The requester cannot reject
+   their own PR. The button appears in the Purchase Requisitions register.
+2) The original requester can EDIT a rejected PR in the existing form. Only
+   business fields (item/specifications/quantity/unit/price/date/remarks) are
+   editable; PR number, department and requester identity remain protected.
+3) The requester can RESUBMIT the same PR number with a correction note.
+   The rejected D1 approval cycle is archived, not erased from history.
+4) The resubmitted PR returns to the Department Head submission queue as a
+   Pending *unsubmitted draft*. The Department Head (or an authorized Admin /
+   substitute) submits it to a NEW Procurement/Finance/Admin approval cycle.
+   The requester cannot bypass this department submission requirement.
+5) Previous rejection reasons and reviewer decisions are readable from
+   Requisition Details > Previous rejection cycles.
+6) Server-side permission, linked-PO/sourcing checks, stale-version checks,
+   CAS updates and audit entries protect the new transitions.
+7) New PRs store a stable requester account ID in addition to their username.
+   Older PRs retain backward compatibility with username/name identity.
+
+CONTENTS (only added/modified files)
+- cloudflare/migrations/0023_requisition_revision_history.sql  [NEW]
+- cloudflare/src/financeRoutes.ts                        [MODIFIED]
+- cloudflare/src/workspaceChanges.ts                     [MODIFIED]
+- src/components/RequisitionFormModal.tsx                [MODIFIED]
+- src/domain/ownerIdentity.ts                            [MODIFIED]
+- src/pages/RequisitionsPage.tsx                         [MODIFIED]
+- src/services/finance.ts                               [MODIFIED]
+- src/services/requisitionCloudUpdate.ts                 [NEW]
+- src/types/procurement.ts                              [MODIFIED]
+- tests/phase5HttpWorkflow.test.mjs                      [MODIFIED]
+
+INSTALLATION
+1. Back up your repository before overwriting files. Extract the ZIP in your
+   repository root, preserving the src/, cloudflare/, and tests/ paths.
+2. Verify locally (PowerShell, from the repository root):
+       npm test
+       npm run build
+   You may also run: npm run test:workflow
+3. BACK UP your remote D1 database and keep the export off public GitHub.
+       cd cloudflare
+       npx wrangler d1 export procurecorp-db --remote --output="./backup-before-pr-revision.sql"
+   Keep this backup in a secure private location; it contains business data.
+4. Apply the NEW, additive migration first. Do not reset or clear D1.
+       npx wrangler d1 execute procurecorp-db --remote --file=./migrations/0023_requisition_revision_history.sql
+   This creates a history table and protective UPDATE trigger. It does not
+   delete existing PRs, original approvals, or invoices.
+5. Deploy the updated API Worker only AFTER the migration succeeds:
+       npx wrangler deploy
+6. Deploy the updated frontend using your existing GitHub Pages process.
+   Deploying only the frontend or only the Worker is not sufficient.
+
+VERIFICATION
+A. Employee makes a PR: status Pending, no approval workflow yet.
+B. Assigned Head sees Reject Draft; enters a nonempty reason. Employee sees
+   Rejected and the reason. Other employees cannot reject the draft.
+C. Requester selects Edit on the rejected PR; changes specs or cost; saves.
+D. Requester selects Resubmit and gives a correction summary. The PR ID stays
+   the same, status returns to Pending, and the former rejection is archived.
+E. Assigned Head opens Approvals and submits the PR to the next approval
+   sequence. The original review and notes remain under Details/history.
+F. Rejection of a PR already in the workflow still uses the existing Reject
+   action; after rejection it too can be revised and resubmitted.
+G. Confirm old tabs cannot change a rejected or revised PR; stale writes should
+   return HTTP 409 and request a refresh.
+
+LOCAL VERIFICATION IN THIS ENVIRONMENT
+- 86 automated tests passed including rejected draft permissions, revision,
+  duplicate submissions, multiple rejection rounds and linked-record checks.
+- Frontend TypeScript compilation passed.
+- Full Vite bundle cannot be built here: archived node_modules contains Windows
+  Rollup binaries but not the Linux native Rollup binary. Run npm run build on
+  your Windows machine before deployment.
+- No remote or production D1 data was accessed or modified.
+
+IMPORTANT
+- Revisions of an already approved, issued, delivered or paid request are
+  deliberately blocked. Those require separate amendment/return workflows.
+- The new table is append-only for updates, and is cleared only by the
+  existing explicit Admin system-database reset (which is destructive).
+- If you have already manually created a migration numbered 0023, reconcile
+  migration filenames rather than overwriting a different migration.

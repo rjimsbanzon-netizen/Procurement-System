@@ -25,7 +25,10 @@ export class PageErrorBoundary extends Component<{ children: ReactNode; title?: 
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-50 text-amber-800" aria-hidden="true"><i className="fa-solid fa-triangle-exclamation"/></div>
       <h2 className="text-xl font-bold">{this.props.title || 'This module could not be displayed'}</h2>
       <p className="mt-2 text-sm text-slate-600">Your account is still signed in. Try reloading this module. If the problem continues, contact Admin with the module name and time of the error.</p>
-      <button type="button" onClick={this.retry} className="pf-primary-action mt-5 rounded-lg bg-[#a64f32] px-5 py-2.5 font-semibold text-white hover:bg-[#873e27]">Retry module</button>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <button type="button" onClick={this.retry} className="pf-primary-action rounded-lg bg-[#a64f32] px-5 py-2.5 font-semibold text-white hover:bg-[#873e27]">Retry module</button>
+        <button type="button" onClick={() => window.location.reload()} className="rounded-lg border border-slate-300 bg-white px-5 py-2.5 font-semibold text-slate-700 hover:bg-slate-50">Reload application</button>
+      </div>
     </section>;
   }
 }

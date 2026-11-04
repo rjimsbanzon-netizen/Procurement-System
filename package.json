@@ -8,10 +8,13 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:workflow": "node --experimental-strip-types --test tests/phase5HttpWorkflow.test.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
-    "jspdf": "^2.5.2",
+    "jspdf": "4.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

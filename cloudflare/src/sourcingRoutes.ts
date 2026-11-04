@@ -89,9 +89,9 @@ async function commitMeeting(env: Env, old: {data:Snapshot;raw:string}, meetingI
     action,details:description},...logs];
   const updated = JSON.stringify(data);
   if (updated.length > 1000000) return j({error:'Workspace too large.'},413,cors);
-  const result = await env.DB.prepare("UPDATE enterprise_state SET data=?, updated_at=datetime('now') WHERE id=1 AND data=?")
+  const result = await env.DB.prepare("UPDATE enterprise_state SET data=?, updated_at=datetime('now') WHERE id=1 AND data=? RETURNING id")
     .bind(updated,old.raw).run();
-  if (result.meta.changes !== 1) return j({error:'Another user changed the workspace. Refresh and try again.'},409,cors);
+  if (result.results?.length !== 1) return j({error:'Another user changed the workspace. Refresh and try again.'},409,cors);
   return j({ok:true,meeting:replacement},200,cors);
 }
 const types = new Map([['application/pdf','.pdf'],['image/png','.png'],['image/jpeg','.jpg'],['application/vnd.openxmlformats-officedocument.wordprocessingml.document','.docx']]);
@@ -244,9 +244,9 @@ export async function handleSourcingRoutes(request:Request, env:Env, user:User, 
       details:`Meeting ${meetingId} with ${safe(target.supplierName)} rescheduled to ${body.date} at ${body.time} (${body.durationMinutes} min). Reason: ${body.reason.trim()}` }, ...newLogs];
     const updated = JSON.stringify(data);
     if (updated.length > 1000000) return fail('Workspace too large.', 413);
-    const result = await env.DB.prepare("UPDATE enterprise_state SET data=?, updated_at=datetime('now') WHERE id=1 AND data=?")
+    const result = await env.DB.prepare("UPDATE enterprise_state SET data=?, updated_at=datetime('now') WHERE id=1 AND data=? RETURNING id")
       .bind(updated, old.raw).run();
-    if (result.meta.changes !== 1) return fail('Another user changed the workspace. Refresh and try again.', 409);
+    if (result.results?.length !== 1) return fail('Another user changed the workspace. Refresh and try again.', 409);
     return j({ ok:true, meeting:replacement }, 200, cors);
   }
 
@@ -381,8 +381,8 @@ export async function handleSourcingRoutes(request:Request, env:Env, user:User, 
       const bid={id:`BID-${crypto.randomUUID()}`,needId,supplierId:own.id,supplierName:own.name,unitPrice:unit,totalCost:Math.round(unit*Number(need.targetQty)*100)/100,leadTimeDays:days,notes:safe(body.notes).slice(0,1000)||safe(terms.offeredModel),quotationTerms:terms,submittedAt:new Date().toISOString(),status:'Submitted'};
       if (!Number.isFinite(bid.totalCost) || bid.totalCost<=0) return fail('Invalid total quotation amount.');
       const dataCopy={...data,bids:[bid,...(data.bids||[])],auditLogs:[{id:`log-${crypto.randomUUID()}`,action:'Bid Submitted',details:`${own.name} submitted a quotation for ${needId}`,user:own.name,role:'Supplier',timestamp:new Date().toISOString()},...(data.auditLogs||[])]};
-      const updated=await env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=datetime(\'now\') WHERE id=1 AND data=?').bind(JSON.stringify(dataCopy),raw).run();
-      if (updated.meta.changes===1) return j({ok:true,bid},201,cors);
+      const updated=await env.DB.prepare('UPDATE enterprise_state SET data=?,updated_at=datetime(\'now\') WHERE id=1 AND data=? RETURNING id').bind(JSON.stringify(dataCopy),raw).run();
+      if (updated.results?.length===1) return j({ok:true,bid},201,cors);
     }
     return fail('Another user updated the workspace. Refresh and retry the bid submission.',409);
   }

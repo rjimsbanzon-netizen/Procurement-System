@@ -1,6 +1,6 @@
 import { CLOUD_API_BASE, CLOUD_TOKEN_KEY, cloudRequest } from './cloud';
 export type ApprovalStep = {number:number;role:'Department Head'|'Procurement Head'|'Finance Officer'|'Admin';status:'Pending'|'Approved'|'Rejected';comment:string;decidedAt:string|null;decidedBy:string|null};
-export type ApprovalRequest = {prId:string;requestedBy:string;department:string;amount:number;status:'Pending'|'Approved'|'Rejected';currentStep:number;totalSteps:number;createdAt:string;pr:Record<string,any>|null;financeHead:{status:'Pending'|'Approved'|'Rejected';decidedAt:string|null;decidedBy:string|null;comment:string}|null;steps:ApprovalStep[]};
+export type ApprovalRequest = {prId:string;requestedBy:string;department:string;amount:number;status:'Pending'|'Approved'|'Rejected';currentStep:number;totalSteps:number;createdAt:string;pr:Record<string,any>|null;canReject?:boolean;canRejectFinanceHead?:boolean;financeHead:{status:'Pending'|'Approved'|'Rejected';decidedAt:string|null;decidedBy:string|null;comment:string}|null;steps:ApprovalStep[]};
 export type BudgetRow = {department:string;allocated:number;committed:number;spent:number;remaining:number;configured:boolean};
 export type FinanceSettings = {financeFrom:number;financeHeadFrom:number;adminFrom:number;assignments:{step_role:string;department:string;user_id:string;name:string;app_role:string;user_department?:string}[];invoiceVerification?:{allowed:boolean;acting:boolean;validUntil:string|null;reason?:string}};
 export type InvoiceRow = {id:string;poId:string;supplierName:string;invoiceNo:string;amount:number;invoiceDate:string;documentId:string|null;status:'Submitted'|'Matched';submittedAt:string;matchedAt:string|null;reasons:string[]};
@@ -13,6 +13,11 @@ async function request<T>(path:string, method='GET', body?:unknown):Promise<T> {
 }
 export const financeAPI={
   approvals:()=>request<{requests:ApprovalRequest[]}>('/finance/approvals'),
+  requisitionCapabilities:()=>request<{draftRejectableIds:string[];editableRejectedIds:string[]}>('/finance/requisitions/capabilities'),
+  rejectDraft:(prId:string,reason:string)=>request<{ok:boolean;pr:Record<string,any>}>(`/finance/requisitions/${encodeURIComponent(prId)}/reject-draft`,'POST',{reason}),
+  reviseRejected:(prId:string,fields:Record<string,unknown>,expectedVersion:number,expectedUpdatedAt:string)=>request<{ok:boolean;pr:Record<string,any>}>(`/finance/requisitions/${encodeURIComponent(prId)}/revise`,'POST',{fields,expectedVersion,expectedUpdatedAt}),
+  resubmitRejected:(prId:string,note:string,expectedVersion:number,expectedUpdatedAt:string)=>request<{ok:boolean;pr:Record<string,any>}>(`/finance/requisitions/${encodeURIComponent(prId)}/resubmit`,'POST',{note,expectedVersion,expectedUpdatedAt}),
+  requisitionHistory:(prId:string)=>request<{history:{cycle:number;rejectedAt:string;rejectedBy:string;rejectionReason:string;pr:Record<string,any>;steps:ApprovalStep[];financeHead:{comment?:string}|null}[]}>(`/finance/requisitions/${encodeURIComponent(prId)}/history`),
   start:(prId:string)=>request('/finance/approvals','POST',{prId}),
   decide:(prId:string,decision:'approve'|'reject',comment:string)=>request(`/finance/approvals/${encodeURIComponent(prId)}/decision`,'POST',{decision,comment}),
   decideFinanceHead:(prId:string,decision:'approve'|'reject',comment:string)=>request(`/finance/approvals/${encodeURIComponent(prId)}/finance-head`,'POST',{decision,comment}),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import procureflowMark from '../procureflow-mark.png';
+import procureflowMark from '../procureflow-mark.webp';
 import { NotificationBell } from '../features/notifications/NotificationBell';
 import {PwaSupport} from './PwaSupport';
 import { loadStaffAssignments, getEffectivePosition } from '../domain/staffPositions';
@@ -88,7 +88,9 @@ export function Header({ onOpenMenu, isMenuOpen }: { onOpenMenu: () => void; isM
     const onFocus=()=>{void refresh();};
     const onUpdated=()=>{void refresh();};
     void refresh();
-    const timer=window.setInterval(()=>{void refresh();},5_000);
+    // Refresh on focus/visibility and poll less aggressively to reduce API calls.
+    // Server-side permissions remain authoritative between UI refreshes.
+    const timer=window.setInterval(()=>{void refresh();},15_000);
     document.addEventListener('visibilitychange',onVisible);
     window.addEventListener('focus',onFocus);
     window.addEventListener('procureflow:delegation-updated',onUpdated);

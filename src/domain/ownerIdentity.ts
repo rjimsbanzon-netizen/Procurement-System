@@ -3,6 +3,8 @@ import type {User} from '../types/procurement';
 /** Historical usernames and names retain ownership of older PR records after profile edits. */
 export function ownsRequisition(record: Record<string, unknown>, user:User | null | undefined):boolean {
   if(!user) return false;
+  if(typeof record.requestedByUserId==='string' && record.requestedByUserId.trim())
+    return record.requestedByUserId===user.id;
   const requesterUsername=record.requestedByUsername;
   if(typeof requesterUsername==='string' && requesterUsername){
     const aliases=user.usernameAliases ?? [];
